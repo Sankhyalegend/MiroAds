@@ -15,7 +15,7 @@ export interface FeedItem {
   t: number
 }
 
-interface Counters { impressions: number; posts: number; replies: number; reposts: number; mindChanges: number }
+interface Counters { impressions: number; posts: number; replies: number; reposts: number; mindChanges: number; exposures: number }
 
 interface State {
   stimulus: Stimulus | null
@@ -56,7 +56,7 @@ export const useStore = create<State>((set, get) => ({
   stage: 'idle',
   round: 0,
   totalRounds: 0,
-  counters: { impressions: 0, posts: 0, replies: 0, reposts: 0, mindChanges: 0 },
+  counters: { impressions: 0, posts: 0, replies: 0, reposts: 0, mindChanges: 0, exposures: 0 },
   feed: [],
   expertFindings: [],
   scorecard: null,
@@ -77,7 +77,7 @@ export const useStore = create<State>((set, get) => ({
     live.sum = 0; live.n = 0
     set({
       personas, stage: 'impressions', round: 0, totalRounds: rounds, running: true,
-      counters: { impressions: 0, posts: 0, replies: 0, reposts: 0, mindChanges: 0 },
+      counters: { impressions: 0, posts: 0, replies: 0, reposts: 0, mindChanges: 0, exposures: 0 },
       feed: [], expertFindings: [], scorecard: null, liveMean: 0,
     })
 
@@ -109,6 +109,8 @@ export const useStore = create<State>((set, get) => ({
           case 'repost':
             counters.reposts++
             feed.push({ id: ++feedId, kind: 'repost', agentId: e.agentId, toAgentId: e.fromAgentId, text: 'reposted', round: e.round, t: e.t }); break
+          case 'exposure':
+            counters.exposures++; break
           case 'mind_change':
             counters.mindChanges++
             live.sum += e.to - e.from; live.scores[e.agentId] = e.to

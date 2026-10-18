@@ -64,6 +64,8 @@ export type SimEvent =
   | { kind: 'post'; id: number; agentId: number; text: string; score: number; round: number; t: number }
   | { kind: 'reply'; id: number; agentId: number; toAgentId: number; toPostId: number; text: string; score: number; round: number; t: number }
   | { kind: 'repost'; agentId: number; fromAgentId: number; postId: number; round: number; t: number }
+  /** An agent saw another agent's post in their feed (no action taken). */
+  | { kind: 'exposure'; agentId: number; fromAgentId: number; round: number; t: number }
   | { kind: 'mind_change'; agentId: number; from: number; to: number; causedBy: number; round: number; t: number }
   | { kind: 'round'; round: number; totalRounds: number; t: number }
   | { kind: 'expert'; name: string; role: string; finding: string; t: number }

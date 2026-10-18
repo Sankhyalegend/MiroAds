@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Square, BarChart3, Palette, MessageSquare, Repeat2, Sparkles, Eye } from 'lucide-react'
+import { Square, BarChart3, Palette, MessageSquare, Repeat2, Sparkles, Eye, Share2 } from 'lucide-react'
 import { useStore } from '../store'
-import NetworkCanvas from '../components/NetworkCanvas'
+import NetworkCanvas, { type EdgeMode } from '../components/NetworkCanvas'
 import { GROUP_COLORS, hexToCss } from '../mock/personas'
 import type { Stage } from '../types'
 
@@ -18,6 +18,8 @@ export default function Run() {
   const nav = useNavigate()
   const { stimulus, personas, stage, round, totalRounds, counters, feed, running, stop, scorecard, liveMean } = useStore()
   const [colorMode, setColorMode] = useState<'sentiment' | 'profession'>('sentiment')
+  const [edgeMode, setEdgeMode] = useState<EdgeMode>('all')
+  const [net, setNet] = useState({ edges: 0, crossCluster: 0 })
   const feedRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { if (!stimulus) nav('/') }, [stimulus, nav])
@@ -45,6 +47,15 @@ export default function Run() {
             ))}
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center rounded-lg border border-line overflow-hidden text-xs">
+              {(['all', 'recent', 'off'] as EdgeMode[]).map(m => (
+                <button key={m} onClick={() => setEdgeMode(m)}
+                  className={`px-2.5 py-1.5 capitalize ${edgeMode === m ? 'bg-panel-2 text-text' : 'text-muted hover:text-text'}`}
+                  title="How much of the conversation web to draw">
+                  {m === 'all' ? <span className="flex items-center gap-1"><Share2 size={12} /> Lines: all</span> : m}
+                </button>
+              ))}
+            </div>
             <button className="btn btn-ghost text-xs whitespace-nowrap" onClick={() => setColorMode(m => m === 'sentiment' ? 'profession' : 'sentiment')}>
               <Palette size={14} /> {colorMode === 'sentiment' ? 'Colour: sentiment' : 'Colour: profession'}
             </button>
@@ -57,7 +68,7 @@ export default function Run() {
         </div>
 
         <div className="card flex-1 min-h-0 relative">
-          <NetworkCanvas personas={personas} colorMode={colorMode} />
+          <NetworkCanvas personas={personas} colorMode={colorMode} edgeMode={edgeMode} onStats={setNet} />
           <div className="absolute left-3 bottom-3 card px-3 py-2 text-xs flex items-center gap-3 bg-panel/90">
             {colorMode === 'sentiment' ? (
               <>
@@ -71,7 +82,7 @@ export default function Run() {
                 <span key={g} className="flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: hexToCss(c) }} />{g}</span>
               ))
             )}
-            <span className="text-muted">· arrows = replies, reposts, mind changes · scroll to zoom, drag to pan, hover a dot</span>
+            <span className="text-muted">· lines = replies (coloured by stance), reposts (blue), mind changes (white) · faint dashes = reading · scroll to zoom, drag to pan, hover a dot</span>
           </div>
         </div>
       </div>
@@ -82,7 +93,10 @@ export default function Run() {
           <Stat icon={<MessageSquare size={14} />} label="Posts + replies" value={counters.posts + counters.replies} />
           <Stat icon={<Repeat2 size={14} />} label="Reposts" value={counters.reposts} />
           <Stat icon={<Sparkles size={14} />} label="Mind changes" value={counters.mindChanges} />
+          <Stat icon={<Share2 size={14} />} label="Connections" value={net.edges} />
+          <Stat label="Cross-group" value={net.edges ? `${Math.round((net.crossCluster / net.edges) * 100)}%` : '–'} />
           <Stat label="Live mean" value={liveMean ? liveMean.toFixed(1) : '–'} accent={liveMean >= 6.5 ? '#3ddc97' : liveMean >= 4 ? '#f5c242' : '#ff6b6b'} />
+          <Stat label="Read events" value={counters.exposures} />
           <Stat label="Crowd" value={personas.length.toLocaleString()} />
         </div>
 

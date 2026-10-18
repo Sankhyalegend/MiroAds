@@ -239,7 +239,7 @@ export function runMockSimulation(opts: EngineOptions): { stop: () => void } {
   for (let r = 1; r <= rounds; r++) {
     const roundStart = socialStart + (r - 1) * msPerRound
     later(roundStart, () => onEvent({ kind: 'round', round: r, totalRounds: rounds, t: now() }))
-    const activeCount = Math.max(8, Math.round(personas.length * (0.06 + rng() * 0.05)))
+    const activeCount = Math.max(12, Math.round(personas.length * (0.11 + rng() * 0.06)))
     for (let k = 0; k < activeCount; k++) {
       // Who acts: influence-weighted with a long tail of ordinary people.
       const p = rng() < 0.35 ? byInfluence[Math.floor(rng() * Math.min(byInfluence.length, 60))] : personas[Math.floor(rng() * personas.length)]
@@ -273,10 +273,13 @@ export function runMockSimulation(opts: EngineOptions): { stop: () => void } {
           const text = s >= 6.5 ? `${v.reaction}. Would ${stimulus.type === 'idea' ? 'back' : 'buy'} it.` : s >= 4 ? `${v.reaction}. On the fence; missing ${v.missing}.` : `${v.objection}. Pass.`
           onEvent({ kind: 'post', id, agentId: p.id, text, score: s, round: r, t: now() })
         }
-        // ambient exposure: readers drift slightly toward loud voices
-        for (let j = 0; j < 3; j++) {
+        // ambient exposure: the feed shows this to a handful of readers, who drift slightly toward loud voices.
+        const readers = 3 + Math.round(p.influence * 9)
+        for (let j = 0; j < readers; j++) {
           const reader = personas[Math.floor(rng() * personas.length)]
-          if (reader.id !== p.id) persuade(reader.id, p, s, r, 0.35)
+          if (reader.id === p.id) continue
+          onEvent({ kind: 'exposure', agentId: reader.id, fromAgentId: p.id, round: r, t: now() })
+          persuade(reader.id, p, s, r, 0.35)
         }
       })
     }
