@@ -1,0 +1,31 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "Sankhya K", email = "sankhya.k@tekspotglobal.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=0.60",
+    "fastapi>=0.115",
+    "httpx>=0.27",
+    "numpy>=1.26",
+    "pydantic>=2.7",
+    "python-dotenv>=1.0",
+    "scikit-learn>=1.5",
+    "uvicorn[standard]>=0.30",
+]
+
+[project.scripts]
+backend = "backend:main"
+
+[build-system]
+requires = ["uv_build>=0.12.15,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+]

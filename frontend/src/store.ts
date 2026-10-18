@@ -3,10 +3,13 @@ import type { Persona, Scorecard, SimEvent, Stage, Stimulus } from './types'
 import { generatePersonas } from './mock/personas'
 import { runMockSimulation, getLastScorecard } from './mock/engine'
 import { bus } from './mock/bus'
+import { api, openEvents, type Health } from './api'
+
+export type Engine = 'mock' | 'live'
 
 export interface FeedItem {
   id: number
-  kind: 'post' | 'reply' | 'repost' | 'mind_change' | 'expert'
+  kind: 'post' | 'reply' | 'repost' | 'mind_change' | 'expert' | 'system'
   agentId?: number
   toAgentId?: number
   text: string
@@ -18,11 +21,14 @@ export interface FeedItem {
 interface Counters { impressions: number; posts: number; replies: number; reposts: number; mindChanges: number; exposures: number }
 
 interface State {
+  engine: Engine
+  health: Health | null
   stimulus: Stimulus | null
   crowdSize: number
   rounds: number
-  speed: number // ms per round
+  speed: number
   personas: Persona[]
+  runId: string | null
   stage: Stage
   round: number
   totalRounds: number
@@ -32,110 +38,175 @@ interface State {
   scorecard: Scorecard | null
   running: boolean
   liveMean: number
+  costUsd: number
+  error: string | null
 
+  setEngine: (e: Engine) => void
+  checkBackend: () => Promise<Health | null>
   setStimulus: (s: Stimulus) => void
   setCrowdSize: (n: number) => void
   setRounds: (n: number) => void
   setSpeed: (ms: number) => void
-  start: () => void
+  start: () => Promise<string | null>
+  loadRun: (id: string) => Promise<void>
   stop: () => void
   reset: () => void
 }
 
 let stopper: { stop: () => void } | null = null
+let closeWs: (() => void) | null = null
 let feedId = 0
-// Live scores live outside React state; the canvas reads them directly.
 export const live = { scores: new Float32Array(0), sum: 0, n: 0 }
 
-export const useStore = create<State>((set, get) => ({
-  stimulus: null,
-  crowdSize: 1000,
-  rounds: 5,
-  speed: 3500,
-  personas: [],
-  stage: 'idle',
-  round: 0,
-  totalRounds: 0,
-  counters: { impressions: 0, posts: 0, replies: 0, reposts: 0, mindChanges: 0, exposures: 0 },
-  feed: [],
-  expertFindings: [],
-  scorecard: null,
-  running: false,
-  liveMean: 0,
+const EMPTY: Counters = { impressions: 0, posts: 0, replies: 0, reposts: 0, mindChanges: 0, exposures: 0 }
 
-  setStimulus: (stimulus) => set({ stimulus }),
-  setCrowdSize: (crowdSize) => set({ crowdSize }),
-  setRounds: (rounds) => set({ rounds }),
-  setSpeed: (speed) => set({ speed }),
+export const useStore = create<State>((set, get) => {
+  // ---- shared ingestion: both the mock engine and the WebSocket feed events through here ----
+  let pending: SimEvent[] = []
+  let flushTimer: number | null = null
 
-  start: () => {
-    const { stimulus, crowdSize, rounds, speed } = get()
-    if (!stimulus) return
-    stopper?.stop()
-    const personas = generatePersonas(crowdSize, 42)
-    live.scores = new Float32Array(crowdSize).fill(-1)
-    live.sum = 0; live.n = 0
-    set({
-      personas, stage: 'impressions', round: 0, totalRounds: rounds, running: true,
-      counters: { impressions: 0, posts: 0, replies: 0, reposts: 0, mindChanges: 0, exposures: 0 },
-      feed: [], expertFindings: [], scorecard: null, liveMean: 0,
-    })
-
-    // Batch React updates: counters/feed are flushed at ~12fps.
-    let pending: SimEvent[] = []
-    let flushTimer: number | null = null
-    const flush = () => {
-      flushTimer = null
-      const evs = pending; pending = []
-      const s = get()
-      const counters = { ...s.counters }
-      const feed = [...s.feed]
-      const expertFindings = [...s.expertFindings]
-      let stage = s.stage, round = s.round, totalRounds = s.totalRounds
-      for (const e of evs) {
-        switch (e.kind) {
-          case 'stage': stage = e.stage; break
-          case 'round': round = e.round; totalRounds = e.totalRounds; break
-          case 'impression':
-            counters.impressions++
-            live.scores[e.agentId] = e.score; live.sum += e.score; live.n++
-            break
-          case 'post':
-            counters.posts++
-            feed.push({ id: ++feedId, kind: 'post', agentId: e.agentId, text: e.text, score: e.score, round: e.round, t: e.t }); break
-          case 'reply':
-            counters.replies++
-            feed.push({ id: ++feedId, kind: 'reply', agentId: e.agentId, toAgentId: e.toAgentId, text: e.text, score: e.score, round: e.round, t: e.t }); break
-          case 'repost':
-            counters.reposts++
-            feed.push({ id: ++feedId, kind: 'repost', agentId: e.agentId, toAgentId: e.fromAgentId, text: 'reposted', round: e.round, t: e.t }); break
-          case 'exposure':
-            counters.exposures++; break
-          case 'mind_change':
-            counters.mindChanges++
-            live.sum += e.to - e.from; live.scores[e.agentId] = e.to
-            feed.push({ id: ++feedId, kind: 'mind_change', agentId: e.agentId, toAgentId: e.causedBy, text: `changed their mind ${e.from.toFixed(1)} → ${e.to.toFixed(1)}`, score: e.to, round: e.round, t: e.t }); break
-          case 'expert':
-            expertFindings.push({ name: e.name, role: e.role, finding: e.finding })
-            feed.push({ id: ++feedId, kind: 'expert', text: `${e.name} (${e.role}): ${e.finding}`, t: e.t }); break
-          case 'done':
-            set({ running: false, scorecard: getLastScorecard() })
-            break
-        }
+  const applyEvents = (evs: SimEvent[]) => {
+    const s = get()
+    const counters = { ...s.counters }
+    const feed = [...s.feed]
+    const expertFindings = [...s.expertFindings]
+    let stage = s.stage, round = s.round, totalRounds = s.totalRounds, costUsd = s.costUsd, error = s.error, running = s.running
+    for (const e of evs) {
+      switch (e.kind) {
+        case 'stage': stage = e.stage; break
+        case 'round': round = e.round; totalRounds = e.totalRounds; break
+        case 'impression':
+          counters.impressions++
+          if (live.scores[e.agentId] < 0) { live.sum += e.score; live.n++ } else { live.sum += e.score - live.scores[e.agentId] }
+          live.scores[e.agentId] = e.score
+          break
+        case 'post':
+          counters.posts++
+          feed.push({ id: ++feedId, kind: 'post', agentId: e.agentId, text: e.text, score: e.score, round: e.round, t: e.t }); break
+        case 'reply':
+          counters.replies++
+          feed.push({ id: ++feedId, kind: 'reply', agentId: e.agentId, toAgentId: e.toAgentId, text: e.text, score: e.score, round: e.round, t: e.t }); break
+        case 'repost':
+          counters.reposts++
+          feed.push({ id: ++feedId, kind: 'repost', agentId: e.agentId, toAgentId: e.fromAgentId, text: 'reposted', round: e.round, t: e.t }); break
+        case 'exposure': counters.exposures++; break
+        case 'mind_change':
+          counters.mindChanges++
+          live.sum += e.to - e.from; live.scores[e.agentId] = e.to
+          feed.push({ id: ++feedId, kind: 'mind_change', agentId: e.agentId, toAgentId: e.causedBy, text: `changed their mind ${e.from.toFixed(1)} → ${e.to.toFixed(1)}`, score: e.to, round: e.round, t: e.t }); break
+        case 'expert':
+          expertFindings.push({ name: e.name, role: e.role, finding: e.finding })
+          feed.push({ id: ++feedId, kind: 'expert', text: `${e.name} (${e.role}): ${e.finding}`, t: e.t }); break
+        case 'crowd_ready':
+          feed.push({ id: ++feedId, kind: 'system', text: `Crowd of ${e.n} sampled from the library.`, t: e.t }); break
+        case 'error':
+          error = e.message
+          feed.push({ id: ++feedId, kind: 'system', text: `Error: ${e.message}`, t: e.t }); break
+        case 'done':
+          running = false
+          if (e.costUsd != null) costUsd = e.costUsd
+          if (s.engine === 'mock') set({ scorecard: getLastScorecard() })
+          else if (s.runId && !e.failed) api.getScorecard(s.runId).then(sc => set({ scorecard: sc })).catch(() => { /* retried below */ })
+          break
       }
-      set({ counters, feed: feed.slice(-250), expertFindings, stage, round, totalRounds, liveMean: live.n ? live.sum / live.n : 0 })
     }
+    set({ counters, feed: feed.slice(-250), expertFindings, stage, round, totalRounds, costUsd, error, running, liveMean: live.n ? live.sum / live.n : 0 })
+  }
 
-    stopper = runMockSimulation({
-      stimulus, personas, rounds, msPerRound: speed, seed: 7,
-      onEvent: (e) => {
-        bus.emit(e)
-        pending.push(e)
-        if (flushTimer == null) flushTimer = window.setTimeout(flush, 80)
-      },
-    })
-  },
+  const flush = () => { flushTimer = null; const evs = pending; pending = []; applyEvents(evs) }
+  const ingest = (e: SimEvent) => {
+    bus.emit(e)
+    pending.push(e)
+    if (flushTimer == null) flushTimer = window.setTimeout(flush, 80)
+  }
 
-  stop: () => { stopper?.stop(); stopper = null; set({ running: false }) },
-  reset: () => { stopper?.stop(); stopper = null; set({ stage: 'idle', running: false, scorecard: null, feed: [], personas: [] }) },
-}))
+  const freshRunState = (personas: Persona[], rounds: number) => {
+    live.scores = new Float32Array(personas.length).fill(-1)
+    live.sum = 0; live.n = 0
+    pending = []
+    set({ personas, stage: 'impressions', round: 0, totalRounds: rounds, running: true, counters: { ...EMPTY }, feed: [], expertFindings: [], scorecard: null, liveMean: 0, costUsd: 0, error: null })
+  }
+
+  const attachWs = (runId: string, fromSeq: number) => {
+    closeWs?.()
+    closeWs = openEvents(runId, fromSeq,
+      (batch) => { for (const e of batch) ingest(e) },
+      () => { closeWs = null },
+      (msg) => set({ error: msg, running: false }))
+  }
+
+  return {
+    engine: 'live',
+    health: null,
+    stimulus: null,
+    crowdSize: 300,
+    rounds: 5,
+    speed: 3500,
+    personas: [],
+    runId: null,
+    stage: 'idle',
+    round: 0,
+    totalRounds: 0,
+    counters: { ...EMPTY },
+    feed: [],
+    expertFindings: [],
+    scorecard: null,
+    running: false,
+    liveMean: 0,
+    costUsd: 0,
+    error: null,
+
+    setEngine: (engine) => set({ engine }),
+    checkBackend: async () => {
+      try { const h = await api.health(); set({ health: h }); return h }
+      catch { set({ health: null }); return null }
+    },
+    setStimulus: (stimulus) => set({ stimulus }),
+    setCrowdSize: (crowdSize) => set({ crowdSize }),
+    setRounds: (rounds) => set({ rounds }),
+    setSpeed: (speed) => set({ speed }),
+
+    start: async () => {
+      const { stimulus, crowdSize, rounds, speed, engine } = get()
+      if (!stimulus) return null
+      stopper?.stop(); closeWs?.(); closeWs = null
+      if (engine === 'mock') {
+        const personas = generatePersonas(crowdSize, 42)
+        freshRunState(personas, rounds)
+        set({ runId: null })
+        stopper = runMockSimulation({ stimulus, personas, rounds, msPerRound: speed, seed: 7, onEvent: ingest })
+        return 'mock'
+      }
+      try {
+        const { id: stimulus_id } = await api.createStimulus(stimulus)
+        const run = await api.createRun({ stimulus_id, crowdSize, rounds, seed: 42 })
+        freshRunState(run.personas, rounds)
+        set({ runId: run.id })
+        attachWs(run.id, 0)
+        return run.id
+      } catch (e) {
+        set({ error: (e as Error).message, running: false })
+        return null
+      }
+    },
+
+    loadRun: async (id) => {
+      if (get().runId === id && get().personas.length) return
+      stopper?.stop(); closeWs?.(); closeWs = null
+      const run = await api.getRun(id)
+      set({ engine: 'live', stimulus: run.stimulus, crowdSize: run.config.crowdSize, rounds: run.config.rounds })
+      freshRunState(run.personas, run.config.rounds)
+      set({ runId: id, running: run.status === 'running' || run.status === 'queued', costUsd: run.costUsd, error: run.error })
+      if (run.hasScorecard) api.getScorecard(id).then(sc => set({ scorecard: sc })).catch(() => {})
+      attachWs(id, 0)
+    },
+
+    stop: () => {
+      const { runId, engine } = get()
+      stopper?.stop(); stopper = null
+      if (engine === 'live' && runId) api.stopRun(runId).catch(() => {})
+      set({ running: false })
+    },
+    reset: () => { stopper?.stop(); stopper = null; closeWs?.(); closeWs = null; set({ stage: 'idle', running: false, scorecard: null, feed: [], personas: [], runId: null, error: null }) },
+  }
+})

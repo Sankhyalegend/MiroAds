@@ -46,17 +46,19 @@ function curvePoint(ax: number, ay: number, bx: number, by: number, bend: number
   return [u * u * ax + 2 * u * t * cx + t * t * bx, u * u * ay + 2 * u * t * cy + t * t * by, cx, cy] as const
 }
 
-export default function NetworkCanvas({ personas, colorMode, edgeMode, onStats }: {
+export default function NetworkCanvas({ personas, colorMode, edgeMode, onStats, onSelect }: {
   personas: Persona[]
   colorMode: 'sentiment' | 'profession'
   edgeMode: EdgeMode
   onStats?: (s: { edges: number; crossCluster: number }) => void
+  onSelect?: (agentId: number) => void
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const [hover, setHover] = useState<{ p: Persona; x: number; y: number; score: number; degree: number } | null>(null)
   const colorModeRef = useRef(colorMode); colorModeRef.current = colorMode
   const edgeModeRef = useRef(edgeMode); edgeModeRef.current = edgeMode
   const onStatsRef = useRef(onStats); onStatsRef.current = onStats
+  const onSelectRef = useRef(onSelect); onSelectRef.current = onSelect
 
   useEffect(() => {
     const host = hostRef.current
@@ -127,18 +129,29 @@ export default function NetworkCanvas({ personas, colorMode, edgeMode, onStats }
         labelLayer.addChild(t)
       })
 
-      // Pan & zoom
-      let dragging = false, lx = 0, ly = 0
-      app.canvas.addEventListener('pointerdown', e => { dragging = true; lx = e.clientX; ly = e.clientY })
-      window.addEventListener('pointerup', () => { dragging = false })
+      // Pan & zoom & click
+      let dragging = false, lx = 0, ly = 0, downX = 0, downY = 0
+      const nearest = (clientX: number, clientY: number): Node | null => {
+        const rect = app.canvas.getBoundingClientRect()
+        const px = (clientX - rect.left - world.x) / world.scale.x
+        const py = (clientY - rect.top - world.y) / world.scale.y
+        let best: Node | null = null, bd = 10 / world.scale.x
+        for (const n of nodes) { const d = Math.hypot(n.x - px, n.y - py); if (d < bd) { bd = d; best = n } }
+        return best
+      }
+      app.canvas.addEventListener('pointerdown', e => { dragging = true; lx = downX = e.clientX; ly = downY = e.clientY })
+      window.addEventListener('pointerup', (e) => {
+        if (dragging && Math.hypot(e.clientX - downX, e.clientY - downY) < 4) {
+          const n = nearest(e.clientX, e.clientY)
+          if (n) onSelectRef.current?.(n.id)
+        }
+        dragging = false
+      })
       app.canvas.addEventListener('pointermove', e => {
         if (dragging) { world.x += e.clientX - lx; world.y += e.clientY - ly; lx = e.clientX; ly = e.clientY; return }
         const rect = app.canvas.getBoundingClientRect()
-        const px = (e.clientX - rect.left - world.x) / world.scale.x
-        const py = (e.clientY - rect.top - world.y) / world.scale.y
-        let best: Node | null = null, bd = 10 / world.scale.x
-        for (const n of nodes) { const d = Math.hypot(n.x - px, n.y - py); if (d < bd) { bd = d; best = n } }
-        if (best) { const n = best; setHover({ p: personas[n.id], x: e.clientX - rect.left, y: e.clientY - rect.top, score: live.scores[n.id], degree: n.degree }) }
+        const n = nearest(e.clientX, e.clientY)
+        if (n) setHover({ p: personas[n.id], x: e.clientX - rect.left, y: e.clientY - rect.top, score: live.scores[n.id], degree: n.degree })
         else setHover(null)
       })
       app.canvas.addEventListener('pointerleave', () => setHover(null))
