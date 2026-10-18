@@ -1,7 +1,7 @@
 [project]
-name = "backend"
+name = "crowd-validator-backend"
 version = "0.1.0"
-description = "Add your description here"
+description = "Crowd Validator API: persona library, 4-stage simulated-crowd engine, research report"
 authors = [
     { name = "Sankhya K", email = "sankhya.k@tekspotglobal.com" }
 ]
@@ -17,12 +17,9 @@ dependencies = [
     "uvicorn[standard]>=0.30",
 ]
 
-[project.scripts]
-backend = "backend:main"
-
-[build-system]
-requires = ["uv_build>=0.12.15,<0.13.0"]
-build-backend = "uv_build"
+# Application, not a distributable package: run with `uv run ...`, no build step.
+[tool.uv]
+package = false
 
 [dependency-groups]
 dev = [

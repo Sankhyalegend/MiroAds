@@ -19,6 +19,29 @@ class BudgetExceeded(RuntimeError):
     pass
 
 
+# Keywords Anthropic structured outputs reject (as of 2026-10). Constraints are enforced in code instead,
+# and moved into the description so the model still sees the intent.
+_UNSUPPORTED = {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "minItems", "maxItems", "minLength", "maxLength", "pattern", "multipleOf", "format"}
+
+
+def sanitize_schema(schema: Any) -> Any:
+    if isinstance(schema, list):
+        return [sanitize_schema(s) for s in schema]
+    if not isinstance(schema, dict):
+        return schema
+    out: dict[str, Any] = {}
+    hints = []
+    for k, v in schema.items():
+        if k in _UNSUPPORTED:
+            hints.append(f"{k} {v}")
+            continue
+        out[k] = sanitize_schema(v)
+    if hints:
+        desc = out.get("description", "")
+        out["description"] = (desc + (" " if desc else "") + "(" + ", ".join(hints) + ")").strip()
+    return out
+
+
 class LLMRefusal(RuntimeError):
     pass
 
@@ -97,7 +120,7 @@ class LLM:
             max_tokens=max_tokens,
             system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": content}],
-            output_config={"format": {"type": "json_schema", "schema": schema}, "effort": effort or ("low" if role == "crowd" else "medium")},
+            output_config={"format": {"type": "json_schema", "schema": sanitize_schema(schema)}, "effort": effort or ("low" if role == "crowd" else "medium")},
         )
         async with self._sem:
             for attempt in range(4):
