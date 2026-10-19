@@ -52,6 +52,9 @@ export default function Scorecard() {
         <div className="card p-5 flex flex-col items-center justify-center text-center">
           <Gauge value={sc.overall} />
           <div className="mt-2 font-semibold" style={{ color: col(sc.overall) }}>{sc.verdict}</div>
+          {sc.crowdMean != null && sc.analystScore != null && (
+            <div className="text-xs text-muted mt-1">Crowd mean <b className="text-text">{sc.crowdMean.toFixed(1)}</b> · research team <b className="text-text">{sc.analystScore.toFixed(1)}</b></div>
+          )}
           <div className="text-xs text-muted mt-1">Confidence: {sc.confidence.label} · {sc.confidence.sample.toLocaleString()} agents · {sc.confidence.agreement}% agreement</div>
         </div>
         <div className="card p-5 space-y-3">

@@ -179,7 +179,11 @@ async def run_judge(stimulus: dict, stats: dict, experts: list[dict], compositio
     for d, w in DIMENSIONS[stype]:
         if not any(x["name"] == d for x in dim_scores):
             dim_scores.append({"name": d, "score": round(stats["mean"], 1), "weight": w, "note": "Not scored separately."})
-    overall = round(sum(d["score"] * d["weight"] for d in dim_scores) / max(1e-6, sum(d["weight"] for d in dim_scores)), 1)
+    analyst_score = round(sum(d["score"] * d["weight"] for d in dim_scores) / max(1e-6, sum(d["weight"] for d in dim_scores)), 1)
+    # The headline is anchored to what the crowd actually said. The analyst's dimension view can move it by at most
+    # one point either way, so the report can never contradict its own data.
+    crowd_mean = round(stats["mean"], 1)
+    overall = round(crowd_mean + max(-1.0, min(1.0, (analyst_score - crowd_mean) * 0.5)), 1)
     n = stats["n"]
     label = "High" if n >= 800 and stats["agreement"] >= 45 else "Medium" if n >= 250 else "Low"
     kpis: list[dict] = []
@@ -196,7 +200,7 @@ async def run_judge(stimulus: dict, stats: dict, experts: list[dict], compositio
     others = [{"type": f["type"], "title": f["title"], "detail": f["detail"], "by": e["name"]} for e in experts for f in e.get("findings", []) if f["type"] != "missing_kpi"]
 
     return {
-        "overall": overall, "verdict": out["verdict"], "summary": out["summary"],
+        "overall": overall, "crowdMean": crowd_mean, "analystScore": analyst_score, "verdict": out["verdict"], "summary": out["summary"],
         "dimensions": dim_scores, "segments": stats["segments"], "objections": stats["objections"], "missing": out["what_is_missing"],
         "missingKpis": kpis[:8], "variants": [{"label": v["label"], "change": v["change"], "predictedDelta": round(float(v["predicted_delta"]), 1)} for v in out["variants"]],
         "polarization": round(stats["sd"], 2), "shift": round(stats["shift"], 2),

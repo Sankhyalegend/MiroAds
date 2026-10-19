@@ -108,6 +108,8 @@ export interface AgentDetail extends Persona {
 
 export interface Scorecard {
   research?: Research
+  crowdMean?: number
+  analystScore?: number
   overall: number
   verdict: string
   summary: string
