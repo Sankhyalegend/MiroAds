@@ -28,8 +28,8 @@ export default function Run() {
 
   useEffect(() => {
     if (id) { loadRun(id).catch(e => setLoadErr(String(e.message))); return }
-    if (!stimulus) nav('/')
-  }, [id, stimulus, nav, loadRun])
+    if (!useStore.getState().stimulus) nav('/')
+  }, [id, nav, loadRun])
   useEffect(() => { if (runId && !id && engine === 'live') nav(`/run/${runId}`, { replace: true }) }, [runId, id, engine, nav])
   useEffect(() => { const el = feedRef.current; if (el) el.scrollTop = el.scrollHeight }, [feed.length])
 

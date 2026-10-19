@@ -69,9 +69,16 @@ export default function NetworkCanvas({ personas, colorMode, edgeMode, onStats, 
     const edges: Edge[] = []
     const ripples: Ripple[] = []
     let crossCluster = 0
-    let unsub = () => {}
+    // Subscribe immediately and buffer events until the renderer is ready, so a replay that arrives
+    // during WebGL initialisation (typical when loading a run by URL) is not lost.
+    let handler: ((e: SimEvent) => void) | null = null
+    const backlog: SimEvent[] = []
+    const unsub = bus.subscribe((e: SimEvent) => { if (handler) handler(e); else backlog.push(e) })
 
     ;(async () => {
+      // Wait until the host actually has a size; laying out against a 0x0 or half-painted pane squashes the graph.
+      for (let i = 0; i < 40 && (host.clientWidth < 240 || host.clientHeight < 200); i++) await new Promise(r => setTimeout(r, 50))
+      if (destroyed) return
       await app.init({ background: 0x0b0f17, resizeTo: host, antialias: true, resolution: Math.min(2, window.devicePixelRatio || 1), autoDensity: true })
       if (destroyed) { app.destroy(true); return }
       host.appendChild(app.canvas)
@@ -173,9 +180,11 @@ export default function NetworkCanvas({ personas, colorMode, edgeMode, onStats, 
         byId(from).degree++; byId(to).degree++
         if (personas[from].professionGroup !== personas[to].professionGroup) crossCluster++
         if (edges.length > MAX_EDGES) edges.splice(0, edges.length - MAX_EDGES)
+        // Report from the event path too, so counters stay right even when the tab is backgrounded and frames pause.
+        if (edges.length % 10 === 0) { onStatsRef.current?.({ edges: edges.length, crossCluster }); host.dataset.edges = String(edges.length) }
       }
 
-      unsub = bus.subscribe((e: SimEvent) => {
+      handler = (e: SimEvent) => {
         switch (e.kind) {
           case 'impression': { const n = byId(e.agentId); n.targetColor = scoreColor(e.score); n.pulse = Math.max(n.pulse, 0.6); break }
           case 'post': { byId(e.agentId).pulse = 1.4; break }
@@ -193,7 +202,9 @@ export default function NetworkCanvas({ personas, colorMode, edgeMode, onStats, 
             break
           }
         }
-      })
+      }
+      // Drain anything that arrived while the renderer was initialising.
+      for (const e of backlog.splice(0)) handler(e)
 
       let statTick = 0
       app.ticker.add((tk) => {
@@ -264,7 +275,10 @@ export default function NetworkCanvas({ personas, colorMode, edgeMode, onStats, 
           if (prog >= 1) liveLayer.circle(b.x, b.y, b.r + 3 + (1 - fade) * 6).stroke({ width: 1, color: ed.color, alpha: 0.6 * fade })
         }
 
-        if (++statTick % 20 === 0) onStatsRef.current?.({ edges: edges.length, crossCluster })
+        if (++statTick % 20 === 0) {
+          onStatsRef.current?.({ edges: edges.length, crossCluster })
+          host.dataset.edges = String(edges.length)  // readable by tests and debugging
+        }
       })
     })()
 

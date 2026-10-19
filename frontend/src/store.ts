@@ -191,13 +191,17 @@ export const useStore = create<State>((set, get) => {
     },
 
     loadRun: async (id) => {
-      if (get().runId === id && get().personas.length) return
+      // Re-entrancy guard: the Run page can call this more than once while state is still settling.
+      if (get().runId === id) return
       stopper?.stop(); closeWs?.(); closeWs = null
+      set({ runId: id, engine: 'live' })
       const run = await api.getRun(id)
-      set({ engine: 'live', stimulus: run.stimulus, crowdSize: run.config.crowdSize, rounds: run.config.rounds })
+      if (get().runId !== id) return // superseded
       freshRunState(run.personas, run.config.rounds)
-      set({ runId: id, running: run.status === 'running' || run.status === 'queued', costUsd: run.costUsd, error: run.error })
+      set({ runId: id, stimulus: run.stimulus, crowdSize: run.config.crowdSize, rounds: run.config.rounds, running: run.status === 'running' || run.status === 'queued', costUsd: run.costUsd, error: run.error })
       if (run.hasScorecard) api.getScorecard(id).then(sc => set({ scorecard: sc })).catch(() => {})
+      // Give the canvas a frame to mount against the sized host before events replay into it.
+      await new Promise(r => setTimeout(r, 120))
       attachWs(id, 0)
     },
 
