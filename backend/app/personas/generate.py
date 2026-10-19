@@ -13,7 +13,7 @@ PROFILE_SCHEMA = {
     "type": "object",
     "properties": {
         "name": {"type": "string"},
-        "backstory": {"type": "string", "description": "120-170 words, first person, one specific recent life event, concrete details"},
+        "backstory": {"type": "string", "description": "90-130 words, first person, one specific recent life event, concrete details. Hard limit 140 words."},
         "pet_peeves": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 2},
         "overvalues": {"type": "string"},
         "ignores": {"type": "string"},
@@ -31,7 +31,11 @@ PROFILE_SCHEMA = {
 SYSTEM = (
     "You write realistic, specific, non-stereotyped personas for market research panels. "
     "Given structured attributes, invent a believable individual consistent with them. Avoid clichés, avoid naming real companies' employees, "
-    "vary sentence rhythm, and never mention that this is a persona. Culturally plausible name for the country. Output JSON only."
+    "vary sentence rhythm, and never mention that this is a persona. Culturally plausible name for the country.\n"
+    "Important for realism: most people are NOT careful, sceptical, spec-reading buyers. Let the attributes decide. A person whose motivation is looks, status, fun, "
+    "convenience or novelty should have an evaluation lens, pet peeves and past-product verdicts that reflect THAT (e.g. 'I buy what makes my desk look good', "
+    "'I hate ugly packaging', 'bought it because a friend had one'), not warranty or return-policy talk. Only personas whose trust posture, heuristic or motivation "
+    "point to proof, price or reliability should care about specs, terms, warranties or total cost. Give enthusiasts real enthusiasm. Output JSON only."
 )
 
 _PEEVES = ["ads that hide the price", "apps that need an account for everything", "fake urgency", "jargon instead of numbers", "subscriptions for things that should be one-off",
@@ -89,7 +93,7 @@ async def generate_batch(seeds: list[int], meter: Meter, progress=None) -> int:
         user = "Attributes:\n" + "\n".join(f"- {k}: {v}" for k, v in sk.items() if k not in ("seed", "nameHint", "traits")) + \
                f"\n- personality: {sk['traits']}\n- suggested name (may adapt for culture): {sk['nameHint']}\nWrite this person."
         try:
-            prof = await L.json(role="crowd", system=SYSTEM, user=user, schema=PROFILE_SCHEMA, meter=meter, fake=lambda: fake_profile(sk), max_tokens=700)
+            prof = await L.json(role="crowd", system=SYSTEM, user=user, schema=PROFILE_SCHEMA, meter=meter, fake=lambda: fake_profile(sk), max_tokens=1200)
         except Exception as e:  # keep the library build going; fall back to template texture
             prof = fake_profile(sk) | {"_error": str(e)[:120]}
         async with lock:

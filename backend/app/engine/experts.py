@@ -69,7 +69,8 @@ async def run_experts(run_id: str, stimulus: dict, stats: dict, top_posts: list[
         user = f"Your role: {expert['name']}. Your lens: {expert['lens']}\n\n{data}\n\nGive your headline and 2-4 findings. JSON only."
         local = random.Random(rng.random())
         try:
-            out = await L.json(role="analyst", system=system, user=user, schema=FINDINGS_SCHEMA, meter=meter, fake=lambda: fake_findings(expert, stats, stimulus["type"], local), max_tokens=900)
+            # Analysts keep adaptive thinking; thinking tokens share max_tokens, so leave headroom.
+            out = await L.json(role="analyst", system=system, user=user, schema=FINDINGS_SCHEMA, meter=meter, fake=lambda: fake_findings(expert, stats, stimulus["type"], local), max_tokens=4000)
         except Exception as e:
             if type(e).__name__ == "BudgetExceeded":
                 state["stopped"] = True; state["stop_reason"] = str(e); return

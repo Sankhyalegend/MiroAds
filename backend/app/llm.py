@@ -122,6 +122,10 @@ class LLM:
             messages=[{"role": "user", "content": content}],
             output_config={"format": {"type": "json_schema", "schema": sanitize_schema(schema)}, "effort": effort or ("low" if role == "crowd" else "medium")},
         )
+        # Crowd role-play doesn't benefit from extended thinking, and thinking tokens count against max_tokens
+        # (they truncated persona JSON and tripled cost). Haiku 5.5 accepts disabling it at effort <= high.
+        if role == "crowd" and settings.crowd_thinking == "off" and model.startswith("claude-haiku"):
+            kwargs["thinking"] = {"type": "disabled"}
         async with self._sem:
             for attempt in range(4):
                 try:

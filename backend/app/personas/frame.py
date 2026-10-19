@@ -53,6 +53,14 @@ DIET_W = [0.16, 0.20, 0.12, 0.18, 0.12, 0.14, 0.08]
 TEMPERAMENT = ["Optimistic", "Anxious", "Cynical", "Enthusiastic", "Pragmatic", "Contrarian"]
 TEMPERAMENT_W = [0.20, 0.15, 0.18, 0.15, 0.22, 0.10]
 INSTITUTION_TRUST = ["Trusts institutions", "Neutral", "Distrusts institutions"]
+# What actually moves this person when they look at something new. The single biggest lever against
+# "everyone demands a spec sheet": most people are not spec-sheet people.
+MOTIVATION = ["Looks and aesthetics", "Status and how it reflects on me", "Convenience and less friction", "Saving money", "Health and wellbeing",
+              "Novelty and being first", "What people I respect use", "Ethics and sustainability", "Reliability and not being let down", "Fun and delight",
+              "Fitting into my routine", "Proof and measurements"]
+MOTIVATION_W = [0.12, 0.07, 0.13, 0.13, 0.08, 0.06, 0.09, 0.05, 0.10, 0.06, 0.06, 0.05]
+RESPONSE_STYLE = ["Gut reaction first, reasons later", "Weighs pros and cons out loud", "Compares to the last thing I bought", "Asks what friends would say",
+                  "Pictures it in my own home or desk", "Looks for the catch", "Gets excited easily, cools down later", "Barely engages unless it is relevant to me"]
 BIGTECH = ["Pro big tech", "Neutral on big tech", "Anti big tech"]
 MOODS = ["rushed", "bored", "curious", "irritable", "upbeat", "tired", "focused", "distracted"]
 
@@ -98,6 +106,8 @@ def sample_skeleton(seed: int) -> dict[str, Any]:
         "heuristic": pick(rng, HEURISTIC, HEURISTIC_W),
         "diet": pick(rng, DIET, DIET_W),
         "temperament": temperament,
+        "motivation": pick(rng, MOTIVATION, MOTIVATION_W),
+        "responseStyle": pick(rng, RESPONSE_STYLE),
         "institutions": pick(rng, INSTITUTION_TRUST, [0.35, 0.40, 0.25]),
         "bigTech": pick(rng, BIGTECH, [0.30, 0.45, 0.25]),
         "traits": traits,
@@ -130,6 +140,7 @@ def to_frontend_persona(agent_id: int, persona_id: int, sk: dict, profile: dict,
         "extra": {
             "country": sk["country"], "gdpTier": sk["gdpTier"], "purchasingPower": sk["purchasingPower"], "currency": sk["currency"],
             "trust": sk["trust"], "heuristic": sk["heuristic"], "diet": sk["diet"], "temperament": sk["temperament"],
+            "motivation": sk.get("motivation", ""), "responseStyle": sk.get("responseStyle", ""),
             "institutions": sk["institutions"], "bigTech": sk["bigTech"],
             "backstory": profile.get("backstory", ""), "petPeeves": profile.get("pet_peeves", []),
             "overvalues": profile.get("overvalues", ""), "ignores": profile.get("ignores", ""),
@@ -146,12 +157,15 @@ def persona_card(sk: dict, profile: dict, mood: str) -> str:
         f"You are {profile.get('name') or sk['nameHint']}, a {sk['ageBand']}-year-old {sk['gender']} {sk['profession'].lower()} in {sk['country']} "
         f"({sk['gdpTier']}-income country, local purchasing power {sk['purchasingPower']:.2f}x US; your household is {sk['income'].lower()} income there; prices in {sk['currency']} feel normal to you).\n"
         f"Politics: {sk['ideology']}. Spending: {sk['economic']}. Tech: {sk['tech']}. Role when buying: {sk['role']}. Trust posture: {sk['trust']}. "
-        f"How you decide: {sk['heuristic']}. Where you get information: {sk['diet']}. Temperament: {sk['temperament']}; {sk['institutions']}; {sk['bigTech']}.\n"
+        f"How you decide: {sk['heuristic']}. What moves you most: {sk.get('motivation', 'varies')}. How you react to new things: {sk.get('responseStyle', 'varies')}. "
+        f"Where you get information: {sk['diet']}. Temperament: {sk['temperament']}; {sk['institutions']}; {sk['bigTech']}.\n"
         f"Personality (0-1): openness {sk['traits']['openness']}, conscientiousness {sk['traits']['conscientiousness']}, extraversion {sk['traits']['extraversion']}, agreeableness {sk['traits']['agreeableness']}, neuroticism {sk['traits']['neuroticism']}.\n"
         f"Backstory: {profile.get('backstory', '')}\n"
         f"Pet peeves: {'; '.join(profile.get('pet_peeves', []))}. You overvalue {profile.get('overvalues', '')} and ignore {profile.get('ignores', '')}.\n"
         f"Past products: {pp}.\n"
         f"How you evaluate things: {profile.get('evaluation_lens', '')}\n"
         f"Writing voice: {profile.get('voice', '')}\n"
-        f"Today you feel {mood}."
+        f"Today you feel {mood}.\n"
+        f"You are a whole person, not a checklist: your taste, mood, situation and what moves you matter as much as your rules. "
+        f"Some things you simply like or dislike without needing documents."
     )

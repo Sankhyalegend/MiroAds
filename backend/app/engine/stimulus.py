@@ -40,7 +40,7 @@ async def describe_image(data_url: str, meter: Meter, title: str) -> dict:
         {"type": "image", "source": {"type": "base64", "media_type": media, "data": b64}},
         {"type": "text", "text": f"Describe this creative titled '{title}'."},
     ]
-    return await llm().json(role="analyst", system=VISION_SYSTEM, user=user, schema=VISION_SCHEMA, meter=meter, fake=fake, max_tokens=900)
+    return await llm().json(role="analyst", system=VISION_SYSTEM, user=user, schema=VISION_SCHEMA, meter=meter, fake=fake, max_tokens=3000)
 
 
 async def build_brief(stimulus: dict, meter: Meter) -> dict:

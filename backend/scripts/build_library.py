@@ -27,7 +27,14 @@ async def main() -> None:
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--budget", type=float, default=6.0, help="USD cap for this build")
     ap.add_argument("--chunk", type=int, default=200)
+    ap.add_argument("--redo-fallbacks", action="store_true", help="delete personas whose LLM call failed (template texture) and regenerate them")
     a = ap.parse_args()
+
+    if a.redo_fallbacks:
+        bad = [r["id"] for r in db.q("SELECT id, profile FROM personas") if '"_error"' in r["profile"]]
+        for i in range(0, len(bad), 500):
+            db.x(f"DELETE FROM personas WHERE id IN ({','.join('?' * len(bad[i:i + 500]))})", bad[i:i + 500])
+        print(f"removed {len(bad)} fallback personas")
 
     existing = {r["seed"] for r in db.q("SELECT seed FROM personas")}
     seeds = [s for s in range(a.seed, a.seed + a.n) if s not in existing]

@@ -170,7 +170,7 @@ async def run_judge(stimulus: dict, stats: dict, experts: list[dict], compositio
             f"SAMPLE COMPOSITION: {composition}\n\nWrite the report fields. JSON only.")
     rng = random.Random(state["seed"] + 99)
     try:
-        out = await L.json(role="analyst", system=system, user=user, schema=JUDGE_SCHEMA, meter=meter, fake=lambda: fake_judge(stats, stype, rng), max_tokens=2200, effort="medium")
+        out = await L.json(role="analyst", system=system, user=user, schema=JUDGE_SCHEMA, meter=meter, fake=lambda: fake_judge(stats, stype, rng), max_tokens=8000, effort="medium")
     except Exception as e:
         out = fake_judge(stats, stype, rng) | {"_error": str(e)[:160]}
 

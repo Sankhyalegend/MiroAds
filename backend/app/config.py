@@ -35,6 +35,8 @@ class Settings:
     # Dev mode runs the analyst roles (experts, judge) on the crowd model to save money.
     dev_mode: bool = field(default_factory=lambda: _env("DEV_MODE", "true").lower() in ("1", "true", "yes"))
     run_budget_usd: float = field(default_factory=lambda: float(_env("RUN_BUDGET_USD", "2.0")))
+    # "off" disables extended thinking for crowd calls (cheaper, no truncation); "adaptive" leaves the model default.
+    crowd_thinking: str = field(default_factory=lambda: _env("CROWD_THINKING", "off"))
     max_concurrency: int = field(default_factory=lambda: int(_env("MAX_CONCURRENCY", "24")))
     db_path: Path = field(default_factory=lambda: Path(_env("DB_PATH", str(ROOT / "data" / "crowd.db"))))
     cors_origins: list[str] = field(default_factory=lambda: _env("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(","))
