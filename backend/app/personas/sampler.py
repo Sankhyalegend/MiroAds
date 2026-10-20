@@ -39,8 +39,14 @@ def _audience_weight(sk: dict, audience: str) -> float:
     return w
 
 
+CONTRARIAN_FLOOR = 0.15
+OUTSIDER_FLOOR = 0.05
+
+
 def is_contrarian(sk: dict) -> bool:
-    return sk["temperament"] == "Contrarian" or (sk["traits"]["agreeableness"] < 0.3 and sk["traits"]["openness"] > 0.55) or sk["trust"] == "Burned before"
+    # Temperament only. Trust posture ("Burned before") and low agreeableness are separate dimensions the crowd
+    # already samples; folding them in made ~46% of every crowd "contrarian" and skewed results sceptical.
+    return sk["temperament"] == "Contrarian"
 
 
 def is_outsider(sk: dict, audience: str) -> bool:
@@ -78,10 +84,7 @@ def sample_crowd(library: list[dict], n: int, audience: str, seed: int) -> list[
         for p in picks:
             used.add(p["id"]); chosen.append(p)
 
-    # 1. Forced edges: contrarians 15%, outsiders 5%.
-    take([p for p in library if is_contrarian(p["skeleton"])], round(n * 0.15), weighted=False)
-    take([p for p in library if is_outsider(p["skeleton"], audience)], round(n * 0.05), weighted=False)
-    # 2. Minimum coverage: every profession group, income band and ideology gets a floor.
+    # 1. Minimum coverage: every profession group, income band and ideology gets a floor.
     by_group = defaultdict(list); by_income = defaultdict(list); by_ideo = defaultdict(list)
     for p in library:
         by_group[p["skeleton"]["professionGroup"]].append(p); by_income[p["skeleton"]["income"]].append(p); by_ideo[p["skeleton"]["ideology"]].append(p)
@@ -95,9 +98,33 @@ def sample_crowd(library: list[dict], n: int, audience: str, seed: int) -> list[
     for ideo in IDEOLOGY:
         have = sum(1 for p in chosen if p["skeleton"]["ideology"] == ideo)
         take(by_ideo[ideo], max(2, int(n * 0.06)) - have)
-    # 3. Fill the rest audience-weighted.
+    # 2. Fill the rest audience-weighted.
     take(library, n - len(chosen))
     chosen = chosen[:n]
+
+    # 3. Edge floors: guarantee at least 15% contrarians and 5% outsiders. These are floors, not extra draws:
+    # if the natural sample already has enough, nothing changes. Swaps take from the most over-represented
+    # profession group so the coverage floors from step 1 still hold.
+    def enforce_floor(pred, floor: float) -> None:
+        need = round(n * floor) - sum(1 for p in chosen if pred(p["skeleton"]))
+        if need <= 0:
+            return
+        pool = [p for p in library if p["id"] not in used and pred(p["skeleton"])]
+        rng.shuffle(pool)
+        for newp in pool[:need]:
+            counts = defaultdict(int)
+            for p in chosen:
+                counts[p["skeleton"]["professionGroup"]] += 1
+            victims = [i for i, p in enumerate(chosen)
+                       if not is_contrarian(p["skeleton"]) and not is_outsider(p["skeleton"], audience)
+                       and counts[p["skeleton"]["professionGroup"]] > floor_g]
+            if not victims:
+                return
+            vi = max(victims, key=lambda i: (counts[chosen[i]["skeleton"]["professionGroup"]], rng.random()))
+            used.discard(chosen[vi]["id"]); used.add(newp["id"]); chosen[vi] = newp
+
+    enforce_floor(is_contrarian, CONTRARIAN_FLOOR)
+    enforce_floor(lambda sk: is_outsider(sk, audience), OUTSIDER_FLOOR)
     rng.shuffle(chosen)
 
     out = []
