@@ -116,6 +116,10 @@ def insert_personas(rows: list[tuple[int, dict, dict]]) -> None:
           [(seed, j(sk), j(pr), now) for seed, sk, pr in rows])
 
 
+def update_persona_profile(pid: int, profile: dict) -> None:
+    x("UPDATE personas SET profile=? WHERE id=?", (j(profile), pid))
+
+
 def all_personas() -> list[dict]:
     return [{"id": r["id"], "skeleton": uj(r["skeleton"]), "profile": uj(r["profile"])} for r in q("SELECT * FROM personas")]
 

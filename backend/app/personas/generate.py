@@ -3,6 +3,7 @@ past products and an evaluation lens. Deterministic fake texture is used without
 from __future__ import annotations
 
 import asyncio
+import collections
 import random
 
 from .. import db
@@ -31,7 +32,8 @@ PROFILE_SCHEMA = {
 SYSTEM = (
     "You write realistic, specific, non-stereotyped personas for market research panels. "
     "Given structured attributes, invent a believable individual consistent with them. Avoid clichés, avoid naming real companies' employees, "
-    "vary sentence rhythm, and never mention that this is a persona. Culturally plausible name for the country.\n"
+    "vary sentence rhythm, and never mention that this is a persona. Culturally plausible name for the country, but NOT the most "
+    "common or stereotypical one: vary region, generation and family naming traditions so a panel of thousands has few repeats.\n"
     "Important for realism: most people are NOT careful, sceptical, spec-reading buyers. Let the attributes decide. A person whose motivation is looks, status, fun, "
     "convenience or novelty should have an evaluation lens, pet peeves and past-product verdicts that reflect THAT (e.g. 'I buy what makes my desk look good', "
     "'I hate ugly packaging', 'bought it because a friend had one'), not warranty or return-policy talk. Only personas whose trust posture, heuristic or motivation "
@@ -80,8 +82,9 @@ def fake_profile(sk: dict) -> dict:
     }
 
 
-async def generate_batch(seeds: list[int], meter: Meter, progress=None) -> int:
-    """Generate and store personas for the given seeds. Returns count stored."""
+async def generate_batch(seeds: list[int], meter: Meter, progress=None, avoid_names: dict[str, list[str]] | None = None) -> int:
+    """Generate and store personas for the given seeds. Returns count stored.
+    `avoid_names` maps country -> names already overused there, so the model picks something else."""
     L = llm()
     rows: list[tuple[int, dict, dict]] = []
     lock = asyncio.Lock()
@@ -90,8 +93,11 @@ async def generate_batch(seeds: list[int], meter: Meter, progress=None) -> int:
     async def one(seed: int):
         nonlocal done
         sk = sample_skeleton(seed)
+        avoid = (avoid_names or {}).get(sk["country"], [])[:40]
         user = "Attributes:\n" + "\n".join(f"- {k}: {v}" for k, v in sk.items() if k not in ("seed", "nameHint", "traits")) + \
-               f"\n- personality: {sk['traits']}\n- suggested name (may adapt for culture): {sk['nameHint']}\nWrite this person."
+               f"\n- personality: {sk['traits']}\n- suggested name (may adapt for culture): {sk['nameHint']}\n" + \
+               (f"- these names are already overused in this panel, do NOT use them or close variants: {', '.join(avoid)}\n" if avoid else "") + \
+               "Write this person."
         try:
             prof = await L.json(role="crowd", system=SYSTEM, user=user, schema=PROFILE_SCHEMA, meter=meter, fake=lambda: fake_profile(sk), max_tokens=1200)
         except Exception as e:  # keep the library build going; fall back to template texture
@@ -106,3 +112,62 @@ async def generate_batch(seeds: list[int], meter: Meter, progress=None) -> int:
     rows.sort(key=lambda r: r[0])
     db.insert_personas(rows)
     return len(rows)
+
+
+def overused_names(min_count: int = 2) -> dict[str, list[str]]:
+    """country -> names that already appear at least `min_count` times there, most frequent first."""
+    by_country: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
+    for p in db.all_personas():
+        if "_error" not in p["profile"]:
+            by_country[p["skeleton"]["country"]][p["profile"]["name"]] += 1
+    return {c: [n for n, k in cnt.most_common() if k >= min_count] for c, cnt in by_country.items()}
+
+
+NAME_SCHEMA = {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"], "additionalProperties": False}
+NAME_SYSTEM = ("You give realistic full names to research-panel participants. Culturally plausible for the country, matching gender and age, "
+               "and deliberately uncommon enough not to collide with names already in use. Output JSON only.")
+
+
+async def dedupe_names(meter: Meter, progress=None) -> int:
+    """Rename every persona whose name is already taken (keeping the lowest id). One tiny call each. Returns renamed count."""
+    L = llm()
+    lib = sorted((p for p in db.all_personas() if "_error" not in p["profile"]), key=lambda p: p["id"])
+    taken: dict[str, set[str]] = collections.defaultdict(set)
+    seen: set[str] = set()
+    dupes = []
+    for p in lib:
+        nm = p["profile"]["name"].strip()
+        taken[p["skeleton"]["country"]].add(nm)
+        if nm.lower() in seen:
+            dupes.append(p)
+        seen.add(nm.lower())
+    lock = asyncio.Lock()
+    renamed = 0
+
+    async def one(p: dict):
+        nonlocal renamed
+        sk = p["skeleton"]
+        used = sorted(taken[sk["country"]])
+        user = (f"Country: {sk['country']}. Gender: {sk['gender']}. Age band: {sk['ageBand']}. Profession: {sk['profession']}.\n"
+                f"Already used in this country, do not reuse any of these or close variants: {', '.join(used[-150:])}\nGive one new full name.")
+        try:
+            out = await L.json(role="crowd", system=NAME_SYSTEM, user=user, schema=NAME_SCHEMA, meter=meter, fake=lambda: {"name": f"{sk['nameHint']} {p['id']}"}, max_tokens=60)
+        except Exception:
+            return
+        new = out.get("name", "").strip()
+        async with lock:
+            if not new or new.lower() in seen:
+                return
+            seen.add(new.lower()); taken[sk["country"]].add(new)
+            old = p["profile"]["name"]
+            prof = dict(p["profile"]); prof["name"] = new
+            # Backstories are first person and rarely name the speaker, but keep them consistent if they do.
+            if old and old in prof.get("backstory", ""):
+                prof["backstory"] = prof["backstory"].replace(old, new)
+            db.update_persona_profile(p["id"], prof)
+            renamed += 1
+            if progress and renamed % 100 == 0:
+                progress(renamed, len(dupes), meter.cost_usd)
+
+    await asyncio.gather(*(one(p) for p in dupes))
+    return renamed
