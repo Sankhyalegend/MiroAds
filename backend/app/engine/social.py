@@ -19,14 +19,16 @@ ACTION_SCHEMA = {
         "action": {"type": "string", "enum": ["post", "reply", "repost", "nothing"]},
         "target_post_id": {"type": "integer", "description": "Required for reply/repost: the id of the feed post you respond to; 0 otherwise"},
         "text": {"type": "string", "description": "What you write (post or reply), in your voice, 1-2 sentences, under 40 words, like a real social post: casual, can be emotional, funny, or a question. No numbered lists unless that is truly your voice. Empty for repost/nothing."},
-        "new_score": {"type": "number", "description": "Your 0-10 score after reading the feed. Keep it if nothing moved you; move it, sometimes by a lot, if someone you relate to showed you something you missed, or if the pile-on made you push back."},
+        "new_score": {"type": "number", "description": "Your 0-10 score now. Most people keep their score. Change it only because one specific post in this feed gave you a reason you did not already have, in either direction. A point you already knew, repeated by more people, is not a new reason."},
+        "moved_by_post_id": {"type": "integer", "description": "If your score changed, the id of the feed post that changed it. 0 if your score did not change."},
         "why": {"type": "string", "description": "One sentence on why you acted this way and whether your score moved"},
     },
-    "required": ["action", "target_post_id", "text", "new_score", "why"],
+    "required": ["action", "target_post_id", "text", "new_score", "moved_by_post_id", "why"],
     "additionalProperties": False,
 }
 
-SYSTEM_TEMPLATE = """You are role-playing one specific real person browsing a social feed where people discuss a new thing. Stay fully in character and write like a real person on social media: short, in your own voice, sometimes emotional, funny, tangential or blunt. People mostly scroll; they reply when something hits a nerve or delights them, repost what they strongly agree with, and post when they have something new to add (a different angle, a personal story, a joke, a question). Don't repeat what the thread already said; add something, repost it, or stay quiet. If you agree with a post and have nothing new to add, repost it rather than writing a "same here" reply. Disagreement is normal; so is enthusiasm. Opinions move when someone you relate to shows you something you missed, and sometimes people double down when a thread piles on.
+SYSTEM_TEMPLATE = """You are role-playing one specific real person browsing a social feed where people discuss a new thing. Stay fully in character and write like a real person on social media: short, in your own voice, sometimes emotional, funny, tangential or blunt. People mostly scroll; they reply when something hits a nerve or delights them, repost what they strongly agree with, and post when they have something new to add (a different angle, a personal story, a joke, a question). Don't repeat what the thread already said; add something, repost it, or stay quiet. If you agree with a post and have nothing new to add, repost it rather than writing a "same here" reply. Disagreement is normal; so is enthusiasm.
+How opinions actually move: most people finish a thread with the opinion they started with. When someone does change their mind, it is because one specific post gave them a reason they had not considered, and that can push them up (a use case they hadn't pictured, a good experience someone had, a rebuttal of a worry) just as easily as down (a flaw they missed). Seeing the same complaint or the same unanswered question again is not new information and does not make the thing worse than it already seemed to you. Nobody in this feed speaks for the company, so unanswered questions are expected. If the thread has been noise, you can drift back toward your own first impression.
 
 {stimulus}
 
@@ -99,6 +101,12 @@ def fake_action(agent: dict, feed: list[Post], my_score: float, rng: random.Rand
     return {"action": "nothing", "target_post_id": 0, "text": "", "new_score": new_score, "why": "just scrolling"}
 
 
+def _fake_with_cause(out: dict, feed: list[Post], my: float) -> dict:
+    """Fake provider: attribute any score change to the first feed post, as the schema now requires."""
+    out.setdefault("moved_by_post_id", feed[0].id if feed and abs(out["new_score"] - my) >= 0.25 else 0)
+    return out
+
+
 async def run_social(run_id: str, stimulus: dict, agents: list[dict], verdicts: dict[int, dict], meter: Meter, state: dict, rounds: int, rounds_start_hour: int = 9) -> dict[int, float]:
     """Returns final scores. Emits round/post/reply/repost/exposure/mind_change events."""
     L = llm()
@@ -145,21 +153,31 @@ async def run_social(run_id: str, stimulus: dict, agents: list[dict], verdicts: 
                 f"[post {p.id}] {agents_by_id[p.agent_id]['name']} ({agents_by_id[p.agent_id]['profession']}, {agents_by_id[p.agent_id]['region']}): \"{p.text}\""
                 + (f" (reply to post {p.reply_to})" if p.reply_to else "") + (f" · {p.replies} replies, {p.reposts} reposts" if p.replies or p.reposts else "")
                 for p in feed) or "(feed is empty)"
+            first = v.get("score", my)
             user = (f"{persona_card(agent['_sk'], agent['_profile'], agent['mood'])}\n\n"
-                    f"Your first impression earlier: score {my:.1f}/10. You said: \"{v.get('reaction', '')}\" Your objection: {v.get('objection', '')}.\n\n"
+                    f"Your first impression, before any discussion: {first:.1f}/10. You said: \"{v.get('reaction', '')}\"\n"
+                    f"Your score right now: {my:.1f}/10.\n\n"
                     f"Round {r} of the discussion. Your feed right now:\n{feed_txt}\n\nDecide what you do (or don't). JSON only.")
             local = random.Random(rng.random())
             try:
-                out = await L.json(role="crowd", system=system, user=user, schema=ACTION_SCHEMA, meter=meter, fake=lambda: fake_action(agent, feed, my, local), max_tokens=500)
+                out = await L.json(role="crowd", system=system, user=user, schema=ACTION_SCHEMA, meter=meter, fake=lambda: _fake_with_cause(fake_action(agent, feed, my, local), feed, my), max_tokens=500)
             except Exception as e:
                 if type(e).__name__ == "BudgetExceeded":
                     state["stopped"] = True; state["stop_reason"] = str(e); return
-                out = fake_action(agent, feed, my, local)
+                out = _fake_with_cause(fake_action(agent, feed, my, local), feed, my)
             # exposures: everything in the feed was seen
             for p in feed:
                 p.exposures += 1
                 await bus.emit(run_id, {"kind": "exposure", "agentId": agent["id"], "fromAgentId": p.agent_id, "round": r})
             new_score = float(max(0, min(10, out.get("new_score", my))))
+            # A score change has to be attributable to a post the agent actually saw. Unattributed drift is reverted
+            # and logged, so the social stage measures influence rather than the model's tendency to nudge scores.
+            moved_by = next((p for p in feed if p.id == out.get("moved_by_post_id")), None)
+            suppressed = None
+            if abs(new_score - my) >= 0.25 and moved_by is None:
+                suppressed = new_score
+                new_score = my
+                state["suppressed_moves"] = state.get("suppressed_moves", 0) + 1
             action = out.get("action", "nothing")
             target = next((p for p in feed if p.id == out.get("target_post_id")), None) if action in ("reply", "repost") else None
             if action in ("reply", "repost") and target is None and feed:
@@ -177,9 +195,14 @@ async def run_social(run_id: str, stimulus: dict, agents: list[dict], verdicts: 
                 await bus.emit(run_id, {"kind": "repost", "agentId": agent["id"], "fromAgentId": target.agent_id, "postId": target.id, "round": r})
             else:
                 action = "nothing"
-            db.append_action(run_id, agent["id"], {"round": r, "action": action, "text": out.get("text", ""), "target": target.id if target else None, "score": new_score, "why": out.get("why", "")})
+            rec = {"round": r, "action": action, "text": out.get("text", ""), "target": target.id if target else None, "score": new_score, "why": out.get("why", "")}
+            if moved_by is not None:
+                rec["movedBy"] = moved_by.id
+            if suppressed is not None:
+                rec["suppressedScore"] = suppressed
+            db.append_action(run_id, agent["id"], rec)
             if abs(new_score - my) >= 0.5:
-                caused_by = target.agent_id if target else (feed[0].agent_id if feed else agent["id"])
+                caused_by = moved_by.agent_id if moved_by else (target.agent_id if target else (feed[0].agent_id if feed else agent["id"]))
                 await bus.emit(run_id, {"kind": "mind_change", "agentId": agent["id"], "from": round(my, 1), "to": round(new_score, 1), "causedBy": caused_by, "round": r})
             if new_score != my:
                 scores[agent["id"]] = new_score

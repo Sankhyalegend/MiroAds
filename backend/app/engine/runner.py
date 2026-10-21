@@ -102,6 +102,7 @@ async def execute_run(run_id: str) -> None:
         if state["stopped"]:
             scorecard["confidence"]["note"] += f" Run ended early: {state.get('stop_reason', 'stopped')}."
         scorecard["research"]["costUsd"] = round(meter.cost_usd, 3)
+        scorecard["research"]["suppressedMoves"] = state.get("suppressed_moves", 0)
         scorecard["research"]["tokens"] = meter.tokens
         scorecard["research"]["provider"] = llm().provider
         scorecard["research"]["models"] = {"crowd": settings.model_for("crowd"), "analyst": settings.model_for("analyst")}
