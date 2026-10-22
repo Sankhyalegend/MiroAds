@@ -1,4 +1,4 @@
-"""Crowd Validator API. Run: uv run uvicorn app.main:app --reload --port 8000"""
+"""Crowd Validator API. Run: uv run python -m uvicorn app.main:app --reload --port 8000"""
 from __future__ import annotations
 
 import asyncio

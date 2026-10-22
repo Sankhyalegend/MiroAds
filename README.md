@@ -20,7 +20,7 @@ cd backend
 copy .env.example .env        # add ANTHROPIC_API_KEY, or leave empty to use the $0 fake provider
 uv sync
 uv run python scripts/build_library.py --n 2000     # one-time persona library (10,000 is about $3 on Haiku 5.5)
-uv run uvicorn app.main:app --port 8000
+uv run python -m uvicorn app.main:app --port 8000   # via python: Windows Application Control can block the uvicorn.exe launcher
 ```
 
 Frontend (Node 18+):
