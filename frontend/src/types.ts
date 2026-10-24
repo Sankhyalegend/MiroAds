@@ -129,7 +129,7 @@ export interface InterviewSummary {
 
 export interface DimensionScore { name: string; score: number; weight: number; note: string }
 export interface SegmentScore { segment: string; group: string; score: number; n: number; intent: number }
-export interface Objection { text: string; count: number; influence: number; quotes: { agent: string; text: string }[] }
+export interface Objection { text: string; agent?: string; count: number; influence: number; quotes: { agent: string; text: string }[] }
 export interface MissingKpi { kpi: string; why: string; target: string }
 export interface Variant { label: string; change: string; predictedDelta: number }
 

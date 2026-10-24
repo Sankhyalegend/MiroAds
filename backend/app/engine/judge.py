@@ -41,32 +41,46 @@ Respond with JSON only."""
 
 
 # ---------- deterministic statistics ----------
-def _cluster_objections(items: list[tuple[str, float, str]], max_clusters: int = 8) -> list[dict]:
-    """items: (objection_text, influence, quote_attribution). Groups near-duplicate objections."""
-    texts = [t for t, _, _ in items if t and t.strip().lower() not in ("none", "n/a", "")]
-    if not texts:
-        return []
-    idx = [i for i, (t, _, _) in enumerate(items) if t and t.strip().lower() not in ("none", "n/a", "")]
-    if len(texts) < 4:
-        labels = list(range(len(texts)))
-    else:
-        vec = TfidfVectorizer(ngram_range=(1, 2), min_df=1, stop_words="english").fit_transform(texts)
-        n_clusters = min(max_clusters, max(2, int(math.sqrt(len(texts)) / 1.5)))
+def _ward_groups(texts: list[str], max_groups: int) -> tuple[list[list[int]], np.ndarray | None]:
+    """Ward linkage on normalised TF-IDF gives balanced groups where average linkage chained 91 of 100 live takeaways,
+    and about half of each run's objections, into one. Short texts that share few words with any other still end up
+    together in one loose group, often the largest. Returns groups of indices into texts plus the vectors, or one group
+    per text and None when there are too few texts or too little shared vocabulary to cluster."""
+    if len(texts) >= 6:
         try:
-            labels = AgglomerativeClustering(n_clusters=n_clusters, metric="cosine", linkage="average").fit_predict(vec.toarray()).tolist()
-        except Exception:
-            labels = list(range(len(texts)))
-    groups: dict[int, list[int]] = defaultdict(list)
-    for j, lab in enumerate(labels):
-        groups[lab].append(idx[j])
+            X = normalize(TfidfVectorizer(ngram_range=(1, 2), min_df=2, stop_words="english", sublinear_tf=True).fit_transform(texts)).toarray()
+            k = min(max_groups, max(2, int(math.sqrt(len(texts)) / 1.5)))
+            labels = AgglomerativeClustering(n_clusters=k, linkage="ward").fit_predict(X).tolist()
+        except ValueError:  # too little shared vocabulary to cluster
+            pass
+        else:
+            groups: dict[int, list[int]] = defaultdict(list)
+            for i, lab in enumerate(labels):
+                groups[lab].append(i)
+            return list(groups.values()), X
+    return [[i] for i in range(len(texts))], None
+
+
+def _medoid(members: list[int], X: np.ndarray | None) -> int:
+    """The member closest to the group's centroid: its most typical text, not the shortest one."""
+    return members[int(np.argmax(X[members] @ X[members].mean(axis=0)))] if X is not None else members[0]
+
+
+def _cluster_objections(items: list[tuple[str, float, str]], max_clusters: int = 8) -> list[dict]:
+    """items: (objection_text, influence, quote_attribution). Groups objections the way _themes groups takeaways; each
+    cluster is labelled with its most central objection, or with the exact text a majority of its members gave."""
+    items = [it for it in items if it[0] and it[0].strip().lower() not in ("none", "n/a", "")]
+    texts = [t for t, _, _ in items]
+    groups, X = _ward_groups(texts, max_clusters)
+    if X is None:  # not clustered: objections repeated verbatim still count together
+        groups = [[i for i, t in enumerate(texts) if t == u] for u in dict.fromkeys(texts)]
     out = []
-    for lab, members in groups.items():
-        # representative = most common exact text, else shortest
-        texts_m = [items[i][0] for i in members]
-        rep = max(set(texts_m), key=lambda t: (texts_m.count(t), -len(t)))
+    for members in groups:
+        same, c = Counter(texts[i] for i in members).most_common(1)[0]
+        rep = max((i for i in members if texts[i] == same), key=lambda i: items[i][1]) if c > len(members) / 2 else _medoid(members, X)
         infl = sum(items[i][1] for i in members)
         quotes = sorted(((items[i][1], items[i][2], items[i][0]) for i in members), reverse=True)[:3]
-        out.append({"text": rep, "count": len(members), "influence": round(infl, 1), "quotes": [{"agent": q[1], "text": q[2]} for q in quotes]})
+        out.append({"text": texts[rep], "agent": items[rep][2], "count": len(members), "influence": round(infl, 1), "quotes": [{"agent": q[1], "text": q[2]} for q in quotes]})
     out.sort(key=lambda o: -(o["count"] * (1 + o["influence"])))
     return out[:6]
 
@@ -75,28 +89,16 @@ INTENTS = ("Would buy/use", "Maybe", "Would not")
 
 
 def _themes(items: list[tuple[str, float, str]], max_themes: int = 6) -> list[dict]:
-    """items: (text, influence, attribution). Groups longer free-text answers (exit-interview takeaways, fixes).
-    Ward linkage on normalised TF-IDF gives balanced groups where average linkage chained 91 of 100 live takeaways
-    into one; each theme is labelled with its most central answer (medoid), not the shortest one."""
+    """items: (text, influence, attribution). Groups longer free-text answers (exit-interview takeaways, fixes) with
+    _ward_groups; each theme is labelled with its most central answer (medoid)."""
     items = [it for it in items if it[0] and it[0].strip()]
     if not items:
         return []
     texts = [t for t, _, _ in items]
-    X = None
-    labels = list(range(len(texts)))
-    if len(texts) >= 6:
-        try:
-            X = normalize(TfidfVectorizer(ngram_range=(1, 2), min_df=2, stop_words="english", sublinear_tf=True).fit_transform(texts)).toarray()
-            k = min(max_themes, max(2, int(math.sqrt(len(texts)) / 1.5)))
-            labels = AgglomerativeClustering(n_clusters=k, linkage="ward").fit_predict(X).tolist()
-        except ValueError:  # too little shared vocabulary to cluster
-            X = None
-    groups: dict[int, list[int]] = defaultdict(list)
-    for i, lab in enumerate(labels):
-        groups[lab].append(i)
+    groups, X = _ward_groups(texts, max_themes)
     out = []
-    for members in groups.values():
-        rep = members[int(np.argmax(X[members] @ X[members].mean(axis=0)))] if X is not None else members[0]
+    for members in groups:
+        rep = _medoid(members, X)
         top = sorted(members, key=lambda i: -items[i][1])[:3]
         out.append({"text": texts[rep], "agent": items[rep][2], "count": len(members), "quotes": [{"agent": items[i][2], "text": texts[i]} for i in top]})
     out.sort(key=lambda o: -o["count"])
