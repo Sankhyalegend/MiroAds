@@ -18,9 +18,10 @@ from .stimulus import stimulus_block
 ACTION_SCHEMA = {
     "type": "object",
     "properties": {
-        "action": {"type": "string", "enum": ["post", "reply", "repost", "like", "nothing"]},
-        "target_post_id": {"type": "integer", "description": "Required for reply/repost/like: the id of the feed post you respond to; 0 otherwise"},
-        "text": {"type": "string", "description": "What you write (post or reply), in your voice, 1-2 sentences, under 40 words, like a real social post: casual, can be emotional, funny, or a question. No numbered lists unless that is truly your voice. Empty for repost/like/nothing."},
+        "action": {"type": "string", "enum": ["nothing", "like", "repost", "reply", "post"],
+                   "description": "What you do on this visit. On a real feed most visits end in 'nothing' (read and move on) or a 'like'."},
+        "target_post_id": {"type": "integer", "description": "Required for like/repost/reply: the id of the feed post you respond to; 0 otherwise"},
+        "text": {"type": "string", "description": "Only for reply or post: what you write, in your voice, 1-2 sentences, under 40 words, like a real social post: casual, can be emotional, funny, or a question. No numbered lists unless that is truly your voice. Empty for nothing/like/repost."},
         "new_score": {"type": "number", "description": "Your 0-10 score now. Most people keep their score. Change it only because one specific post in this feed gave you a reason you did not already have, in either direction. A point you already knew, repeated by more people, is not a new reason."},
         "moved_by_post_id": {"type": "integer", "description": "If your score changed, the id of the feed post that changed it. 0 if your score did not change."},
         "why": {"type": "string", "description": "One sentence on why you acted this way and whether your score moved"},
@@ -29,7 +30,7 @@ ACTION_SCHEMA = {
     "additionalProperties": False,
 }
 
-SYSTEM_TEMPLATE = """You are role-playing one specific real person browsing a social feed where people discuss a new thing. Stay fully in character and write like a real person on social media: short, in your own voice, sometimes emotional, funny, tangential or blunt. People mostly scroll; they reply when something hits a nerve or delights them, repost what they strongly agree with, and post when they have something new to add (a different angle, a personal story, a joke, a question). Don't repeat what the thread already said; add something, repost it, like it, or stay quiet. If you agree with a post and have nothing new to add, like it (the most common reaction) or repost it if you want your own followers to see it, rather than writing a "same here" reply. Disagreement is normal; so is enthusiasm.
+SYSTEM_TEMPLATE = """You are role-playing one specific real person opening a social app where people are discussing a new thing. Stay fully in character and behave the way people really use these apps: most visits end with reading and moving on, or a like. A typical thread gets many likes for every reply, and most readers never write anything. Write only when you have something specific the feed doesn't already have (your own experience, a new angle, a joke, a direct question to someone), or when a post hits a nerve hard enough that you can't resist. Agreeing is a like; agreeing so strongly that you want your own followers to see it is a repost; "same here", "this!" or restating a point already made is never worth a reply. Your posting habit, given with your profile, says how often someone like you writes at all. When you do write, write like a real person on social media: short, in your own voice, sometimes emotional, funny, tangential or blunt. Disagreement is normal; so is enthusiasm.
 How opinions actually move: most people finish a thread with the opinion they started with. When someone does change their mind, it is because one specific post gave them a reason they had not considered, and that can push them up (a use case they hadn't pictured, a good experience someone had, a rebuttal of a worry) just as easily as down (a flaw they missed). Seeing the same complaint or the same unanswered question again is not new information and does not make the thing worse than it already seemed to you. Nobody in this feed speaks for the company, so unanswered questions are expected. If the thread has been noise, you can drift back toward your own first impression.
 
 {stimulus}
@@ -81,6 +82,20 @@ def rank_feed(agent: dict, posts: list[Post], agents_by_id: dict[int, dict], k: 
     return [p for p in ranked if p.agent_id != agent["id"]][:k]
 
 
+def _habit(agent: dict) -> float:
+    return 0.6 * agent["activity"] + 0.4 * agent["traits"]["extraversion"]
+
+
+def posting_habit(agent: dict) -> str:
+    """How often this person writes at all, from activity and extraversion: lurkers, occasional repliers, regular posters."""
+    h = _habit(agent)
+    if h < 0.45:
+        return "you almost never post or reply online; you read, and now and then you like something."
+    if h < 0.7:
+        return "you reply now and then when something really gets to you, but mostly you read and like."
+    return "you post and reply a lot; if you have a take, you share it."
+
+
 def fake_action(agent: dict, feed: list[Post], my_score: float, rng: random.Random) -> dict:
     roll = rng.random()
     ex = agent["extra"]
@@ -90,20 +105,21 @@ def fake_action(agent: dict, feed: list[Post], my_score: float, rng: random.Rand
         for p in feed[:4]:
             pull += (p.score - my_score) * 0.08 * (0.5 + agent["traits"]["agreeableness"]) * (1 - agent["traits"]["conscientiousness"] * 0.3)
     new_score = round(max(0, min(10, my_score + pull + (rng.random() - 0.5) * 0.3)), 1)
-    if feed and roll < 0.38:
+    writes = 0.08 + 0.35 * _habit(agent)  # chance this visit produces a reply or post
+    if feed and roll < writes * 0.75:
         t = feed[0] if rng.random() < 0.6 else rng.choice(feed)
         agree = abs(t.score - my_score) < 2.5
         text = (f"Same. {t.text.split('.')[0]}." if agree else f"Not buying that. {'For what it costs' if ex['heuristic'] == 'Price-first' else 'Where is the evidence'}?") if my_score < 6.5 else (f"Agree, {t.text.split('.')[0].lower()}." if agree else "Different experience here, it worked for me.")
         return {"action": "reply", "target_post_id": t.id, "text": text, "new_score": new_score, "why": "something in the feed hit a nerve"}
-    if feed and roll < 0.48:
-        t = feed[0] if rng.random() < 0.7 else rng.choice(feed)
-        return {"action": "repost", "target_post_id": t.id, "text": "", "new_score": new_score, "why": "strongly agree"}
-    if feed and roll < 0.64:
-        close = [p for p in feed if abs(p.score - my_score) < 2] or feed
-        return {"action": "like", "target_post_id": rng.choice(close).id, "text": "", "new_score": new_score, "why": "agree, nothing to add"}
-    if roll < 0.8:
+    if roll < writes:
         tone = "Would try it." if my_score >= 6.5 else "On the fence." if my_score >= 4 else "Pass."
         return {"action": "post", "target_post_id": 0, "text": f"{tone} {ex['lens']}", "new_score": new_score, "why": "had something to add"}
+    if feed and roll < writes + 0.08:
+        t = feed[0] if rng.random() < 0.7 else rng.choice(feed)
+        return {"action": "repost", "target_post_id": t.id, "text": "", "new_score": new_score, "why": "strongly agree"}
+    if feed and roll < writes + 0.43:
+        close = [p for p in feed if abs(p.score - my_score) < 2] or feed
+        return {"action": "like", "target_post_id": rng.choice(close).id, "text": "", "new_score": new_score, "why": "agree, nothing to add"}
     return {"action": "nothing", "target_post_id": 0, "text": "", "new_score": new_score, "why": "just scrolling"}
 
 
@@ -165,7 +181,8 @@ async def run_social(run_id: str, stimulus: dict, agents: list[dict], verdicts: 
                 + (f" (reply to post {p.reply_to})" if p.reply_to else "") + (f" · {p.replies} replies, {p.reposts} reposts, {p.likes} likes" if p.replies or p.reposts or p.likes else "")
                 for p in feed) or "(feed is empty)"
             first = v.get("score", my)
-            user = (f"{persona_card(agent['_sk'], agent['_profile'], agent['mood'], agent.get('_mood_reason', ''))}{market_block(agent)}\n\n"
+            user = (f"{persona_card(agent['_sk'], agent['_profile'], agent['mood'], agent.get('_mood_reason', ''))}{market_block(agent)}\n"
+                    f"Your posting habit: {posting_habit(agent)}\n\n"
                     f"Your first impression, before any discussion: {first:.1f}/10. You said: \"{v.get('reaction', '')}\"\n"
                     f"Your score right now: {my:.1f}/10.\n\n"
                     f"Round {r} of the discussion. Your feed right now:\n{feed_txt}\n\nDecide what you do (or don't). JSON only.")
