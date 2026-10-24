@@ -9,6 +9,7 @@ from collections import Counter, defaultdict
 import numpy as np
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.preprocessing import normalize
 
 from ..llm import Meter, llm
 from .banks import DIMENSIONS
@@ -73,6 +74,41 @@ def _cluster_objections(items: list[tuple[str, float, str]], max_clusters: int =
 INTENTS = ("Would buy/use", "Maybe", "Would not")
 
 
+def _themes(items: list[tuple[str, float, str]], max_themes: int = 6) -> list[dict]:
+    """items: (text, influence, attribution). Groups longer free-text answers (exit-interview takeaways, fixes).
+    Ward linkage on normalised TF-IDF gives balanced groups where average linkage chained 91 of 100 live takeaways
+    into one; each theme is labelled with its most central answer (medoid), not the shortest one."""
+    items = [it for it in items if it[0] and it[0].strip()]
+    if not items:
+        return []
+    texts = [t for t, _, _ in items]
+    X = None
+    labels = list(range(len(texts)))
+    if len(texts) >= 6:
+        try:
+            X = normalize(TfidfVectorizer(ngram_range=(1, 2), min_df=2, stop_words="english", sublinear_tf=True).fit_transform(texts)).toarray()
+            k = min(max_themes, max(2, int(math.sqrt(len(texts)) / 1.5)))
+            labels = AgglomerativeClustering(n_clusters=k, linkage="ward").fit_predict(X).tolist()
+        except ValueError:  # too little shared vocabulary to cluster
+            X = None
+    groups: dict[int, list[int]] = defaultdict(list)
+    for i, lab in enumerate(labels):
+        groups[lab].append(i)
+    out = []
+    for members in groups.values():
+        rep = members[int(np.argmax(X[members] @ X[members].mean(axis=0)))] if X is not None else members[0]
+        top = sorted(members, key=lambda i: -items[i][1])[:3]
+        out.append({"text": texts[rep], "agent": items[rep][2], "count": len(members), "quotes": [{"agent": items[i][2], "text": texts[i]} for i in top]})
+    out.sort(key=lambda o: -o["count"])
+    return out[:max_themes]
+
+
+def _alt_key(name: str) -> str:
+    """'My existing desk lamp' and 'my current desk lamp' count as the same alternative."""
+    k = re.sub(r"\b(my|the|a|an|existing|current|old|own|usual|already)\b", " ", name.lower())
+    return re.sub(r"\s+", " ", k).strip(" .")
+
+
 def _stated_intents(agents: list[dict], verdicts: dict[int, dict], final: dict[int, float], interviews: dict[int, dict]) -> tuple[list[str], str]:
     """Per agent: what they said in the exit interview, else what they said first, else the score cut-off."""
     out: list[str] = []
@@ -106,12 +142,12 @@ def _interview_stats(agents: list[dict], interviews: dict[int, dict]) -> dict | 
     alts: dict[str, list] = {}
     for _, iv in rows:
         name = re.sub(r"\s+", " ", iv.get("alternativeNamed", "")).strip().rstrip(".")
-        if name and name.lower() not in ("nothing", "none", "n/a", "no", "nothing really", "not sure"):
-            alts.setdefault(name.lower(), [name, 0])[1] += 1
+        if name and _alt_key(name) not in ("nothing", "none", "n/a", "no", "nothing really", "not sure", ""):
+            alts.setdefault(_alt_key(name), [name, 0])[1] += 1
     who = lambda a: f"{a['name']}, {a['profession']}, {a['region']}"
-    themes = _cluster_objections([(iv["takeaway"], a["influence"], who(a)) for a, iv in rows])
-    fixes = _cluster_objections([(iv["oneFix"], a["influence"], who(a)) for a, iv in rows
-                                 if iv["intent"] != "Would buy/use" and iv.get("oneFix", "").strip().lower().rstrip(".") not in ("nothing", "none", "")])
+    themes = _themes([(iv["takeaway"], a["influence"], who(a)) for a, iv in rows])
+    fixes = _themes([(iv["oneFix"], a["influence"], who(a)) for a, iv in rows
+                     if iv["intent"] != "Would buy/use" and iv.get("oneFix", "").strip().lower().rstrip(".") not in ("nothing", "none", "")], max_themes=5)
     quotes = []
     for intent in INTENTS:
         for a, iv in sorted((r for r in rows if r[1]["intent"] == intent), key=lambda r: -r[0]["influence"])[:3]:
@@ -121,8 +157,8 @@ def _interview_stats(agents: list[dict], interviews: dict[int, dict]) -> dict | 
         "changedMind": {"no": _pct(ch["No"], n), "positive": _pct(ch["More positive"], n), "negative": _pct(ch["More negative"], n)},
         "vsAlternatives": {"better": _pct(vs["Better"], n), "same": _pct(vs["About the same"], n), "worse": _pct(vs["Worse"], n), "unknown": _pct(vs["Don't know any"], n)},
         "alternatives": [{"name": d, "count": c} for d, c in sorted(alts.values(), key=lambda x: -x[1])[:6]],
-        "themes": [{"text": t["text"], "count": t["count"], "quotes": t["quotes"]} for t in themes],
-        "fixes": [{"text": f["text"], "count": f["count"]} for f in fixes[:5]],
+        "themes": themes,
+        "fixes": [{"text": f["text"], "count": f["count"]} for f in fixes],
         "quotes": quotes,
     }
 

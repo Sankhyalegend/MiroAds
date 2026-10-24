@@ -150,8 +150,8 @@ function Market() {
               <div className="flex items-baseline gap-2 min-w-0">
                 <span className="font-semibold truncate">{c.url ? <a href={c.url} target="_blank" rel="noreferrer" className="hover:underline">{c.name}</a> : c.name}</span>
                 <span className="text-xs text-muted truncate">{c.maker}</span>
-                <span className="ml-auto font-semibold text-accent shrink-0">{c.price}</span>
               </div>
+              <div className="text-xs font-semibold text-accent mt-0.5">{c.price}</div>
               <div className="text-xs mt-1">{c.pitch}</div>
               <div className="text-xs mt-1.5"><span className="text-pos">Liked for: </span>{c.likedFor}</div>
               <div className="text-xs"><span className="text-neg">Complaints: </span>{c.complaints}</div>

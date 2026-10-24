@@ -447,7 +447,10 @@ function summarizeInterviews(personas: Persona[], interviews: Map<number, MockIn
     changedMind: { no: pct(ch.get('No') ?? 0), positive: pct(ch.get('More positive') ?? 0), negative: pct(ch.get('More negative') ?? 0) },
     vsAlternatives: { better: pct(vs.get('Better') ?? 0), same: pct(vs.get('About the same') ?? 0), worse: pct(vs.get('Worse') ?? 0), unknown: pct(vs.get("Don't know any") ?? 0) },
     alternatives: top(altCounts, 6).map(([name, c]) => ({ name, count: c })),
-    themes: top(themeCounts, 4).map(([text, c]) => ({ text, count: c, quotes: rows.filter(r => r.iv.quote === text).slice(0, 2).map(r => ({ agent: who(r.p), text })) })),
+    themes: top(themeCounts, 4).map(([text, c]) => {
+      const by = rows.filter(r => r.iv.quote === text)
+      return { text, agent: who(by[0].p), count: c, quotes: by.slice(0, 2).map(r => ({ agent: who(r.p), text })) }
+    }),
     fixes: top(fixCounts, 5).map(([text, c]) => ({ text, count: c })),
     quotes: (['Would buy/use', 'Maybe', 'Would not'] as Intent[]).flatMap(i => rows.filter(r => r.iv.intent === i).sort((a, b) => b.p.influence - a.p.influence).slice(0, 3).map(r => ({ agent: who(r.p), intent: i, text: r.iv.quote }))),
   }

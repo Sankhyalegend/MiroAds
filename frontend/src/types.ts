@@ -121,7 +121,8 @@ export interface InterviewSummary {
   changedMind: { no: number; positive: number; negative: number }
   vsAlternatives: { better: number; same: number; worse: number; unknown: number }
   alternatives: { name: string; count: number }[]
-  themes: { text: string; count: number; quotes: { agent: string; text: string }[] }[]
+  /** `text` is the theme's most typical answer, written by `agent`. */
+  themes: { text: string; agent?: string; count: number; quotes: { agent: string; text: string }[] }[]
   fixes?: { text: string; count: number }[]
   quotes: { agent: string; intent: Intent; text: string }[]
 }

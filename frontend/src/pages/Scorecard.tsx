@@ -167,9 +167,9 @@ export default function Scorecard() {
                 {mk.priceRange && <div className="text-xs text-muted mb-2">Price range: <b className="text-text">{mk.priceRange}</b></div>}
                 <div className="space-y-1.5">
                   {(mk.competitors ?? []).map(c => (
-                    <div key={c.name} className="flex justify-between gap-3 text-sm">
-                      <span className="truncate">{c.url ? <a href={c.url} target="_blank" rel="noreferrer" className="hover:underline">{c.name}</a> : c.name} <span className="text-xs text-muted">{c.maker}</span></span>
-                      <span className="text-accent font-semibold shrink-0">{c.price}</span>
+                    <div key={c.name} className="flex justify-between gap-3 text-sm min-w-0">
+                      <span className="truncate shrink-0 max-w-[55%]">{c.url ? <a href={c.url} target="_blank" rel="noreferrer" className="hover:underline">{c.name}</a> : c.name} <span className="text-xs text-muted">{c.maker}</span></span>
+                      <span className="text-accent font-semibold truncate text-right" title={c.price}>{c.price}</span>
                     </div>
                   ))}
                 </div>
@@ -271,7 +271,7 @@ function Concluded({ iv }: { iv: InterviewSummary }) {
         {iv.themes.slice(0, 4).map(t => (
           <div key={t.text} className="bg-panel-2 rounded-lg p-2.5 text-sm">
             “{t.text}” <span className="text-xs text-muted">· {t.count} {t.count === 1 ? 'agent' : 'agents'}</span>
-            {t.quotes[0] && <div className="text-xs text-muted mt-0.5">— {t.quotes[0].agent}</div>}
+            {(t.agent ?? t.quotes[0]?.agent) && <div className="text-xs text-muted mt-0.5">— {t.agent ?? t.quotes[0].agent}</div>}
           </div>
         ))}
       </div>

@@ -30,7 +30,11 @@ $sc = Invoke-RestMethod "$Api/runs/$($r.id)/scorecard"
 ""
 "=== SCORECARD ==="
 "overall=$($sc.overall)  verdict: $($sc.verdict)"
-"intent: buy $($sc.intentSplit.buy)% maybe $($sc.intentSplit.maybe)% no $($sc.intentSplit.no)%  polarization=$($sc.polarization) shift=$($sc.shift)"
+"intent: buy $($sc.intentSplit.buy)% maybe $($sc.intentSplit.maybe)% no $($sc.intentSplit.no)% (from $($sc.intentSource))  polarization=$($sc.polarization) shift=$($sc.shift)"
+$m = $sc.research.market
+"market: $($m.status) $($m.reason) | $($m.competitors.Count) alternatives, $($m.news.Count) news | mood shifts wary=$($m.moodShifts.wary) excited=$($m.moodShifts.excited)"
+"market position: $($sc.marketPosition)"
+if ($sc.interviews) { "exit interviews: n=$($sc.interviews.n) NPS=$($sc.interviews.nps) changed mind up/down=$($sc.interviews.changedMind.positive)%/$($sc.interviews.changedMind.negative)% vs alternatives better/same/worse=$($sc.interviews.vsAlternatives.better)/$($sc.interviews.vsAlternatives.same)/$($sc.interviews.vsAlternatives.worse)%"; $sc.interviews.themes | Select-Object -First 3 | ForEach-Object { "  $($_.count)x $($_.text)" } }
 "confidence: $($sc.confidence.label) ($($sc.confidence.agreement)% agreement, n=$($sc.confidence.sample)) $($sc.confidence.note)"
 "summary: $($sc.summary)"
 "dimensions: " + (($sc.dimensions | ForEach-Object { "$($_.name)=$($_.score)" }) -join ', ')

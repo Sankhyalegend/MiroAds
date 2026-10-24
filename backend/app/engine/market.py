@@ -23,7 +23,8 @@ MARKET_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string"}, "maker": {"type": "string"}, "price": {"type": "string", "description": "As found, with currency; 'unknown' if not found"},
+                    "name": {"type": "string", "description": "One product or family, short"}, "maker": {"type": "string"},
+                    "price": {"type": "string", "description": "The typical price as found, short, with currency (e.g. '$129', '₹2,999', '$99-139'); 'unknown' if not found. Put model variants in the pitch."},
                     "pitch": {"type": "string", "description": "One line"}, "liked_for": {"type": "string"}, "complaints": {"type": "string"},
                     "url": {"type": "string", "description": "A source URL from the research, or empty"},
                 },

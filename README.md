@@ -1,9 +1,12 @@
 # Crowd Validator
 
-Upload a creative, website, offer or business idea. A crowd sampled from a library of thousands of simulated people
-(different jobs, countries, incomes, ideologies, personalities, moods) reacts individually, argues on a social feed,
-and a research team writes it up: score, segment breakdown, clustered objections, missing KPIs, better variants,
-methodology and limitations. The whole run streams live into an animated network of agents and the lines between them.
+Upload a creative, website, offer or business idea. A market scan first looks up what is already out there
+(competitors, prices, recent news). A crowd sampled from a library of thousands of simulated people (different jobs,
+countries, incomes, ideologies, personalities, moods) reacts individually, each knowing only the part of the market
+someone like them would have come across. They argue in a social app (posts, replies, reposts, likes), everyone is
+interviewed at the end about what they concluded, and a research team writes it up: score, stated intent, NPS,
+segment breakdown, clustered objections and takeaways, market position, missing KPIs, better variants, methodology and
+limitations. The run streams live into an animated network of agents, or a readable feed of the app they use.
 
 ## Layout
 
@@ -38,20 +41,28 @@ Smoke test the API end to end: `powershell -File backend/scripts/smoke_run.ps1 -
 | Stage | What happens | Model |
 |---|---|---|
 | 0 Brief | Normalize input; images get a vision description | analyst |
+| 0b Market scan | Web search (8 searches) for competitors, prices, news; a second call extracts them as JSON. Each agent gets the slice someone like them would know (by tech adoption and information diet; ~30% of buyers/users already own an alternative), and news can make them wary or excited | market (crowd model by default), analyst |
 | 1 First impressions | Every agent scores alone: score, intent, objection, missing, reasoning | crowd |
-| 2 Social rounds | Active agents read a ranked feed and post / reply / repost / do nothing; scores drift | crowd |
-| 3 Research team | 9 expert lenses audit the numbers: missing KPIs, risks, caveats | analyst |
-| 4 Report | Stats computed in code; the model writes verdict, notes, variants, limitations | analyst |
+| 2 Social app | Each round a slice of the crowd reads a ranked feed and posts / replies / reposts / likes / does nothing; everyone opens the app at least once; score changes must cite a post | crowd |
+| 2b Exit interviews | Everyone says what they concluded: intent, takeaway, mind change, vs alternatives, recommend 0-10, the one fix | crowd |
+| 3 Research team | 10 expert lenses (incl. a competitive analyst) audit the numbers: missing KPIs, risks, caveats | analyst |
+| 4 Report | Stats computed in code (intent from what agents said, NPS, themes); the model writes verdict, market position, variants, limitations | analyst |
 
-Events (`stage, impression, post, reply, repost, exposure, mind_change, round, expert, done`) are persisted with a
-sequence number and streamed over `WS /runs/{id}/events?from_seq=N`, so a page refresh replays the run.
+Turn the market scan off per run on the Upload page. Without an API key the fake provider returns a labelled simulated
+market; if web search fails the run continues without one and says why.
+
+Events (`stage, market, impression, post, reply, repost, like, exposure, mind_change, round, interview, expert, done`)
+are persisted with a sequence number and streamed over `WS /runs/{id}/events?from_seq=N`, so a page refresh replays the run.
 
 ## Cost (list price, Haiku 5.5 crowd)
 
-| Run | Dev mode (analysts on Haiku) | Full (analysts on Sonnet 5.5) |
+| Run (market scan on) | Dev mode (analysts on Haiku) | Full (analysts on Sonnet 5.5) |
 |---|---|---|
-| 100 agents, 3 rounds | ~$0.05 | ~$0.90 |
-| 300 agents, 5 rounds | ~$0.15 | ~$1.00 |
-| 1,000 agents, 5 rounds | ~$0.45 | ~$1.30 |
+| 100 agents, 3 rounds | $0.23 (measured) | ~$1.15 |
+| 300 agents, 5 rounds | ~$0.40 | ~$1.35 |
+| 1,000 agents, 5 rounds | ~$0.95 | ~$1.95 |
+
+The market scan is about $0.10 of that ($10 per 1,000 web searches plus ~120K input tokens on Haiku); turning it off
+saves that. A 1,000-agent run in full mode is close to the default $2 budget.
 
 Guardrails: per-run budget (`RUN_BUDGET_USD`), early stop on budget, and set a spend cap on the API key itself.
