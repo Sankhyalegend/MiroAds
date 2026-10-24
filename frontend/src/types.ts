@@ -17,7 +17,11 @@ export interface Stimulus {
   targetAudience: string
   /** Optional hint for the market scan: competitors the maker already knows about. */
   competitors?: string
+  /** Files added on the Upload page. Images and PDFs travel as data URLs, notes as text; after a run only name/type/size come back. */
+  attachments?: Attachment[]
 }
+
+export interface Attachment { name: string; type: string; size: number; data?: string; text?: string }
 
 /** What is already on the market, from the market scan (web search on the live engine, simulated offline). */
 export interface MarketBrief {

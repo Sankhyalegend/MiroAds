@@ -1,19 +1,23 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, RotateCcw, Download, AlertTriangle, Target, FlaskConical, Quote, Microscope, Users, Store, Mic } from 'lucide-react'
+import { ArrowLeft, RotateCcw, Download, AlertTriangle, Target, FlaskConical, Quote, Microscope, Users, Store, Mic, Eye, FileText } from 'lucide-react'
 import { useStore } from '../store'
 import { api } from '../api'
-import type { InterviewSummary, Research } from '../types'
+import type { InterviewSummary, Research, Stimulus } from '../types'
 
 const col = (s: number) => s >= 7 ? '#3ddc97' : s >= 5 ? '#f5c242' : '#ff6b6b'
 
 export default function Scorecard() {
   const nav = useNavigate()
   const { id } = useParams()
-  const { scorecard: storeSc, stimulus: storeStim, reset, loadRun, runId, market: storeMarket } = useStore()
+  const { scorecard: storeSc, stimulus: storeStim, reset, loadRun, runId, market: storeMarket, engine } = useStore()
   const [group, setGroup] = useState('Profession')
   const [loaded, setLoaded] = useState<{ sc: typeof storeSc; stim: typeof storeStim } | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  // The brief as the crowd read it (with file descriptions) is saved on the run, not in the form state.
+  const liveId = id ?? (engine === 'live' ? runId : null)
+  const [seen, setSeen] = useState<Stimulus | null>(null)
+  useEffect(() => { if (liveId) api.getRun(liveId).then(r => setSeen(r.stimulus)).catch(() => {}) }, [liveId])
 
   useEffect(() => {
     if (!id) { if (!storeSc) nav('/'); return }
@@ -78,6 +82,20 @@ export default function Scorecard() {
           </div>
         </div>
       </div>
+
+      <details className="card p-5">
+        <summary className="cursor-pointer font-semibold flex flex-wrap items-center gap-2 list-none">
+          <Eye size={16} className="text-accent" /> What the crowd saw
+          <span className="text-xs text-muted font-normal">the brief every person read, including what the AI read from your files</span>
+        </summary>
+        <p className="text-sm text-muted leading-relaxed whitespace-pre-wrap mt-3">{(seen ?? stimulus).brief}</p>
+        {(seen ?? stimulus).attachments?.length ? (
+          <div className="flex flex-wrap gap-1.5 mt-3">
+            {(seen ?? stimulus).attachments!.map(a => <span key={a.name} className="chip inline-flex items-center gap-1"><FileText size={11} /> {a.name}</span>)}
+          </div>
+        ) : null}
+        <div className="text-xs mt-3"><span className="text-muted">Audience: </span>{stimulus.targetAudience || 'not given'}</div>
+      </details>
 
       <div className="grid md:grid-cols-2 gap-5">
         <div className="card p-5">

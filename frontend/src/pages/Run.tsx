@@ -8,6 +8,18 @@ import AgentApp from '../components/AgentApp'
 import { GROUP_COLORS, INTENT_COLOR, hexToCss } from '../mock/personas'
 import type { Stage } from '../types'
 
+/** What is happening right now, in plain words, under the stage pills. */
+const NOW: Record<Stage, string> = {
+  idle: 'Getting the crowd ready…',
+  market: 'Searching the web for competitors, prices and news…',
+  impressions: 'Everyone is forming a first impression on their own…',
+  social: 'People are talking about it in the app',
+  interviews: 'Asking everyone what they concluded…',
+  experts: 'The research team is going through the results…',
+  judge: 'Writing the report…',
+  done: 'Done. The report is ready.',
+}
+
 const STAGES: { id: Stage; label: string }[] = [
   { id: 'market', label: 'Market scan' },
   { id: 'impressions', label: 'First impressions' },
@@ -93,6 +105,13 @@ export default function Run() {
               </div>
             ))}
           </div>
+          {(running || stage === 'done') && (
+            <div className="text-xs text-muted flex items-center gap-2">
+              {running && <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />}
+              {NOW[stage]}{stage === 'social' && totalRounds ? `: round ${round} of ${totalRounds}` : ''}
+              {stage === 'done' && scorecard && <button className="text-accent hover:underline" onClick={() => nav(scorecardPath)}>Open it</button>}
+            </div>
+          )}
         </div>
 
         {error && <div className="card px-4 py-2 text-sm text-neg border-neg/40">Engine error: {error}</div>}

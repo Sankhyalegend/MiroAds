@@ -9,20 +9,26 @@ import { useStore } from './store'
 
 function Header() {
   const loc = useLocation()
-  const { engine, health, checkBackend } = useStore()
+  const { engine, health, checkBackend, runId, personas, scorecard } = useStore()
   useEffect(() => { checkBackend() }, [checkBackend])
-  const step = loc.pathname === '/' ? 1 : loc.pathname.startsWith('/run') ? 2 : loc.pathname.startsWith('/scorecard') ? 3 : 0
+  const step = loc.pathname === '/' ? 1 : loc.pathname.startsWith('/run') ? 2 : loc.pathname.startsWith('/scorecard') ? 3 : loc.pathname === '/history' ? 4 : 0
+  // Steps link back to the current run and its report once they exist.
+  const steps = [
+    { label: '1. Set up', to: '/' },
+    { label: '2. Watch', to: runId ? `/run/${runId}` : personas.length ? '/run' : null },
+    { label: '3. Report', to: scorecard ? (runId ? `/scorecard/${runId}` : '/scorecard') : null },
+  ]
   return (
     <header className="h-14 border-b border-line flex items-center px-4 gap-4 bg-panel/60 backdrop-blur sticky top-0 z-20">
       <Link to="/" className="flex items-center gap-2 font-bold tracking-tight">
         <span className="w-7 h-7 rounded-lg bg-accent text-bg grid place-items-center"><Users size={16} /></span>
-        Crowd Validator
+        <span className="max-sm:hidden">Crowd Validator</span>
       </Link>
-      <nav className="ml-6 flex items-center gap-2 text-xs text-muted">
-        {['Upload', 'Run', 'Scorecard'].map((s, i) => (
-          <span key={s} className={`px-2 py-1 rounded-md ${step === i + 1 ? 'bg-panel-2 text-text' : ''}`}>{i + 1}. {s}</span>
-        ))}
-        <Link to="/history" className={`px-2 py-1 rounded-md flex items-center gap-1 ${step === 0 ? 'bg-panel-2 text-text' : ''}`}><HistoryIcon size={12} /> History</Link>
+      <nav className="ml-2 sm:ml-6 flex items-center gap-1 text-xs text-muted">
+        {steps.map((s, i) => s.to
+          ? <Link key={s.label} to={s.to} className={`px-2 py-1 rounded-md hover:text-text ${step === i + 1 ? 'bg-panel-2 text-text' : ''}`}>{s.label}</Link>
+          : <span key={s.label} className="px-2 py-1 rounded-md opacity-50 cursor-default" title="Start a run first">{s.label}</span>)}
+        <Link to="/history" className={`px-2 py-1 rounded-md flex items-center gap-1 hover:text-text ${step === 4 ? 'bg-panel-2 text-text' : ''}`}><HistoryIcon size={12} /> History</Link>
       </nav>
       <div className="ml-auto text-xs text-muted flex items-center gap-2">
         {engine === 'live' ? (

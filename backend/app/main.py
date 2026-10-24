@@ -22,6 +22,16 @@ app = FastAPI(title="Crowd Validator", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["*"], allow_headers=["*"])
 
 
+class AttachmentIn(BaseModel):
+    """A file added on the Upload page. Images and PDFs arrive as data URLs and are described by the analyst model;
+    text notes arrive as text. Either way the crowd reads the result as part of the brief."""
+    name: str = Field(max_length=200)
+    type: str = ""
+    size: int = 0
+    data: Optional[str] = Field(default=None, max_length=15_000_000)  # ~10 MB file
+    text: Optional[str] = Field(default=None, max_length=200_000)
+
+
 class StimulusIn(BaseModel):
     type: str = Field(pattern="^(creative|website|offer|idea)$")
     title: str
@@ -31,6 +41,7 @@ class StimulusIn(BaseModel):
     url: Optional[str] = None
     offer: Optional[dict[str, Any]] = None
     competitors: str = ""  # optional hint for the market scan
+    attachments: list[AttachmentIn] = Field(default_factory=list, max_length=6)
 
 
 class RunIn(BaseModel):
@@ -98,7 +109,7 @@ def get_stimulus(sid: str):
     s = db.get_stimulus(sid)
     if not s:
         raise HTTPException(404, "stimulus not found")
-    return s
+    return _without_file_data(s)
 
 
 @app.post("/runs")
@@ -131,6 +142,13 @@ def runs_list():
     return out
 
 
+def _without_file_data(s: dict | None) -> dict | None:
+    """Attached files are listed by name only; their contents can be megabytes and are already folded into the brief."""
+    if not s or not s.get("attachments"):
+        return s
+    return s | {"attachments": [{"name": a.get("name"), "type": a.get("type"), "size": a.get("size", 0)} for a in s["attachments"]]}
+
+
 def run_view(rid: str) -> dict:
     r = db.get_run(rid)
     if not r:
@@ -138,7 +156,7 @@ def run_view(rid: str) -> dict:
     agents = db.get_run_agents(rid)
     personas = [{k: v for k, v in a.items() if k not in ("verdict", "finalScore", "actions", "context", "interview")} for a in agents]
     return {"id": rid, "status": r["status"], "stage": r["stage"], "costUsd": round(r["cost_usd"], 4), "tokens": r["tokens"], "error": r["error"],
-            "config": r["config"], "stimulus": db.get_stimulus(r["stimulus_id"]), "personas": personas, "lastSeq": db.max_seq(rid),
+            "config": r["config"], "stimulus": _without_file_data(db.get_stimulus(r["stimulus_id"])), "personas": personas, "lastSeq": db.max_seq(rid),
             "hasScorecard": db.get_scorecard(rid) is not None}
 
 
