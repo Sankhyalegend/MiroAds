@@ -1,6 +1,8 @@
 """Stage 4: numbers from code, words from the model. Produces the frontend Scorecard plus research extras."""
 from __future__ import annotations
 
+import asyncio
+import logging
 import math
 import random
 import re
@@ -15,6 +17,8 @@ from ..llm import Meter, llm
 from .banks import DIMENSIONS
 from .market import market_summary
 from .stimulus import stimulus_block
+
+log = logging.getLogger("judge")
 
 JUDGE_SCHEMA = {
     "type": "object",
@@ -105,6 +109,145 @@ def _themes(items: list[tuple[str, float, str]], max_themes: int = 6) -> list[di
     return out[:max_themes]
 
 
+def _who(a: dict) -> str:
+    return f"{a['name']}, {a['profession']}, {a['region']}"
+
+
+def _objection_items(agents: list[dict], verdicts: dict[int, dict], final: dict[int, float]) -> list[tuple[str, float, str]]:
+    """(objection, influence, attribution) for everyone the stimulus hasn't won over."""
+    items = []
+    for a in agents:
+        v = verdicts.get(a["id"])
+        if v and final.get(a["id"], v["score"]) < 6.5 and v.get("objection", "").strip().lower() not in ("none", "n/a", ""):
+            items.append((v["objection"], a["influence"], _who(a)))
+    return items
+
+
+def _takeaway_items(agents: list[dict], interviews: dict[int, dict]) -> list[tuple[str, float, str]]:
+    return [(interviews[a["id"]]["takeaway"], a["influence"], _who(a)) for a in agents if a["id"] in interviews]
+
+
+def _fix_items(agents: list[dict], interviews: dict[int, dict]) -> list[tuple[str, float, str]]:
+    """What would win over the people who wouldn't buy."""
+    return [(iv["oneFix"], a["influence"], _who(a)) for a in agents if (iv := interviews.get(a["id"]))
+            and iv["intent"] != "Would buy/use" and iv.get("oneFix", "").strip().lower().rstrip(".") not in ("nothing", "none", "")]
+
+
+_NO_ALTERNATIVE = ("nothing", "none", "n/a", "no", "nothing really", "not sure", "")
+
+
+def _alternative_items(agents: list[dict], interviews: dict[int, dict]) -> list[tuple[str, float, str]]:
+    """What people would compare it with or choose instead."""
+    return [(iv["alternativeNamed"], a["influence"], _who(a)) for a in agents if (iv := interviews.get(a["id"]))
+            and _alt_key(iv.get("alternativeNamed", "")) not in _NO_ALTERNATIVE]
+
+
+THEMES_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "themes": {
+            "type": "array", "description": "As many themes as the answers really need (usually 4-7), largest first",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string", "description": "The theme in plain words, short and specific to this stimulus (e.g. 'Too expensive at $149 for a desk lamp'; for alternatives, the product or habit, e.g. 'BenQ ScreenBar'), not one person's quote"},
+                    "representative": {"type": "integer", "description": "Number of the answer that best represents the theme"},
+                    "members": {"type": "array", "items": {"type": "integer"}, "description": "Numbers of every answer in this theme"},
+                },
+                "required": ["label", "representative", "members"], "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["themes"],
+    "additionalProperties": False,
+}
+
+THEMES_SYSTEM = ("You sort short answers from a consumer research panel into themes for the report. Group by what people mean, not the words "
+                 "they use: 'too pricey', '$149 is a lot' and 'I can get one for $20' are all about price. Put each answer in exactly one theme, the "
+                 "one that matches its main point. Use as many themes as the answers really need (usually 4-7); answers that fit no theme go in a "
+                 "theme labelled 'Other'. Respond with JSON only.")
+
+_THEME_KINDS = {
+    "objections": "each person's single strongest objection",
+    "takeaways": "what each person concluded once the discussion was over",
+    "fixes": "the one change that would win each person over",
+    "alternatives": "what each person would compare it with or choose instead (put the same product or habit together)",
+}
+
+
+async def _model_groups(items: list[tuple[str, float, str]], kind: str, stimulus: dict, meter: Meter) -> list[tuple[str, int, list[int]]] | None:
+    """[(label, representative, members)] covering every answer once, or None when the model's sort can't be used.
+    The model only sorts; counts, influence and quotes are computed here from its assignment."""
+    texts = [re.sub(r"\s+", " ", t).strip() for t, _, _ in items]
+    if not texts:
+        return None
+    numbered = "\n".join(f"{i}. {t}" for i, t in enumerate(texts))
+    user = (f"STIMULUS: \"{stimulus.get('title', '')}\" ({stimulus.get('type', '')})\n"
+            f"THE ANSWERS ARE {_THEME_KINDS[kind]}:\n{numbered}\n\nSort them into themes. JSON only.")
+    out = await llm().json(role="themes", system=THEMES_SYSTEM, user=user, schema=THEMES_SCHEMA, meter=meter, fake=lambda: {"themes": []}, max_tokens=12000, effort="low")
+    seen: set[int] = set()
+    groups: list[tuple[str, int, list[int]]] = []
+    for t in out.get("themes", []):
+        members = [i for i in dict.fromkeys(t.get("members", [])) if isinstance(i, int) and 0 <= i < len(texts) and i not in seen]
+        if not members:
+            continue
+        seen.update(members)
+        rep = t["representative"] if t.get("representative") in members else members[0]
+        label = re.sub(r"^other\s*[:\-–]\s*(?=\S)", "", (t.get("label") or "").strip(), flags=re.I)  # "Other: unclear what it does" is a real theme
+        groups.append((label or texts[rep], rep, members))
+    missing = [i for i in range(len(texts)) if i not in seen]
+    if not groups or len(missing) > 0.2 * len(texts):  # it skipped too much: the word-based groups are safer
+        return None
+    if missing:
+        other = next((g for g in groups if g[0].lower() == "other"), None)
+        if other:
+            other[2].extend(missing)
+        else:
+            groups.append(("Other", missing[0], missing))
+    return groups
+
+
+def _grouped(items: list[tuple[str, float, str]], groups: list[tuple[str, int, list[int]]]) -> list[dict]:
+    out = []
+    for label, rep, members in groups:
+        top = [rep] + [i for i in sorted(members, key=lambda i: -items[i][1]) if i != rep][:2]
+        out.append({"text": label, "count": len(members), "influence": round(sum(items[i][1] for i in members), 1),
+                    "quotes": [{"agent": items[i][2], "text": items[i][0]} for i in top]})
+    return out
+
+
+async def group_by_meaning(stats: dict, agents: list[dict], verdicts: dict[int, dict], final: dict[int, float],
+                           interviews: dict[int, dict], stimulus: dict, meter: Meter) -> None:
+    """Re-sorts objections, takeaways, fixes and named alternatives into themes with one small model call each. Word
+    matching can't group answers this short: on a live run it led with a vague catch-all and showed price (40% of
+    objections by keyword) as 14 of 87, and counted "my existing ScreenBar" and "ScreenBar I already own" apart.
+    Any list the model can't sort (offline provider, error, skipped answers) keeps its word-based groups."""
+    kinds = ["objections"] + (["takeaways", "fixes", "alternatives"] if interviews and stats.get("interviews") else [])
+    stats["grouped_by"] = {k: "word matching" for k in kinds}
+    if llm().provider == "fake":
+        return
+    jobs = {"objections": _objection_items(agents, verdicts, final)}
+    if len(kinds) > 1:
+        jobs |= {"takeaways": _takeaway_items(agents, interviews), "fixes": _fix_items(agents, interviews), "alternatives": _alternative_items(agents, interviews)}
+    results = await asyncio.gather(*(_model_groups(items, kind, stimulus, meter) for kind, items in jobs.items()), return_exceptions=True)
+    other_last = lambda o: o["text"].lower() == "other"
+    for (kind, items), groups in zip(jobs.items(), results):
+        if isinstance(groups, BaseException) or not groups:
+            log.warning("grouping %s by meaning failed, keeping word matching: %s", kind, groups if isinstance(groups, BaseException) else "unusable sort")
+            continue
+        stats["grouped_by"][kind] = "model"
+        out = _grouped(items, groups)
+        if kind == "objections":
+            stats["objections"] = sorted(out, key=lambda o: (other_last(o), -(o["count"] * (1 + o["influence"]))))[:6]
+            stats["top_objection"] = stats["objections"][0]["text"] if stats["objections"] else "none"
+        elif kind == "takeaways":
+            stats["interviews"]["themes"] = sorted(out, key=lambda o: (other_last(o), -o["count"]))[:6]
+        elif kind == "fixes":
+            stats["interviews"]["fixes"] = [{"text": o["text"], "count": o["count"]} for o in sorted(out, key=lambda o: (other_last(o), -o["count"]))[:5]]
+        else:
+            stats["interviews"]["alternatives"] = [{"name": o["text"], "count": o["count"]} for o in sorted(out, key=lambda o: -o["count"]) if not other_last(o)][:6]
+
+
 def _alt_key(name: str) -> str:
     """'My existing desk lamp' and 'my current desk lamp' count as the same alternative."""
     k = re.sub(r"\b(my|the|a|an|existing|current|old|own|usual|already)\b", " ", name.lower())
@@ -144,16 +287,14 @@ def _interview_stats(agents: list[dict], interviews: dict[int, dict]) -> dict | 
     alts: dict[str, list] = {}
     for _, iv in rows:
         name = re.sub(r"\s+", " ", iv.get("alternativeNamed", "")).strip().rstrip(".")
-        if name and _alt_key(name) not in ("nothing", "none", "n/a", "no", "nothing really", "not sure", ""):
+        if name and _alt_key(name) not in _NO_ALTERNATIVE:
             alts.setdefault(_alt_key(name), [name, 0])[1] += 1
-    who = lambda a: f"{a['name']}, {a['profession']}, {a['region']}"
-    themes = _themes([(iv["takeaway"], a["influence"], who(a)) for a, iv in rows])
-    fixes = _themes([(iv["oneFix"], a["influence"], who(a)) for a, iv in rows
-                     if iv["intent"] != "Would buy/use" and iv.get("oneFix", "").strip().lower().rstrip(".") not in ("nothing", "none", "")], max_themes=5)
+    themes = _themes(_takeaway_items(agents, interviews))
+    fixes = _themes(_fix_items(agents, interviews), max_themes=5)
     quotes = []
     for intent in INTENTS:
         for a, iv in sorted((r for r in rows if r[1]["intent"] == intent), key=lambda r: -r[0]["influence"])[:3]:
-            quotes.append({"agent": who(a), "intent": intent, "text": iv["quote"]})
+            quotes.append({"agent": _who(a), "intent": intent, "text": iv["quote"]})
     return {
         "n": n, "nps": round((prom - det) / n * 100), "promoters": _pct(prom, n), "passives": _pct(n - prom - det, n), "detractors": _pct(det, n),
         "changedMind": {"no": _pct(ch["No"], n), "positive": _pct(ch["More positive"], n), "negative": _pct(ch["More negative"], n)},
@@ -177,7 +318,7 @@ def interview_summary(stats: dict) -> str:
             f"(promoters {iv['promoters']}%, detractors {iv['detractors']}%). Changed mind since first impression: more positive {iv['changedMind']['positive']}%, "
             f"more negative {iv['changedMind']['negative']}%. Versus what they use or know: better {iv['vsAlternatives']['better']}%, same {iv['vsAlternatives']['same']}%, "
             f"worse {iv['vsAlternatives']['worse']}%, know none {iv['vsAlternatives']['unknown']}%. Alternatives they'd choose instead: {alts}.\n"
-            f"What they concluded (clustered):\n{themes}\nWhat would win the non-buyers over: {fixes}")
+            f"What they concluded (grouped):\n{themes}\nWhat would win the non-buyers over: {fixes}")
 
 
 def compute_stats(agents: list[dict], verdicts: dict[int, dict], final: dict[int, float], mind_changes: int, posts: list[dict], interviews: dict[int, dict] | None = None) -> dict:
@@ -206,13 +347,7 @@ def compute_stats(agents: list[dict], verdicts: dict[int, dict], final: dict[int
     best = (prof[0]["segment"], prof[0]["score"]) if prof else ("", 0.0)
     worst = (prof[-1]["segment"], prof[-1]["score"]) if prof else ("", 0.0)
 
-    items = []
-    for a in agents:
-        v = verdicts.get(a["id"])
-        if not v or final.get(a["id"], v["score"]) >= 6.5:
-            continue
-        items.append((v.get("objection", ""), a["influence"], f"{a['name']}, {a['profession']}, {a['region']}"))
-    objections = _cluster_objections(items)
+    objections = _cluster_objections(_objection_items(agents, verdicts, final))
 
     miss = defaultdict(int)
     for a in agents:
@@ -330,6 +465,7 @@ async def run_judge(stimulus: dict, stats: dict, experts: list[dict], compositio
         "research": {
             "methodology": out["methodology_note"], "limitations": out["limitations"], "team": experts, "otherFindings": others[:12],
             "composition": composition, "diversity": stats["diversity"], "topPosts": stats["top_posts"][:10], "mindChanges": stats["mind_changes"],
+            "groupedBy": stats.get("grouped_by", {}),
             "costUsd": round(cost_usd, 3),
         },
     }

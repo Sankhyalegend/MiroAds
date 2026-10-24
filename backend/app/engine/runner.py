@@ -12,7 +12,7 @@ from ..personas.sampler import composition, sample_crowd
 from .events import bus
 from .experts import run_experts
 from .interview import run_interviews
-from .judge import compute_stats, run_judge
+from .judge import compute_stats, group_by_meaning, run_judge
 from .market import apply_market, run_market_scan
 from .social import run_social
 from .stage1 import run_stage1
@@ -104,6 +104,7 @@ async def execute_run(run_id: str) -> None:
 
         # ---- stats (code) ----
         stats = compute_stats(crowd, verdicts, final, mind_changes, posts, interviews)
+        await group_by_meaning(stats, crowd, verdicts, final, interviews, stimulus, meter)
         comp = composition(crowd)
 
         # ---- stage 3 ----

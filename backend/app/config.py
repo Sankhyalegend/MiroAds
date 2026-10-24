@@ -58,6 +58,8 @@ class Settings:
             return self.crowd_model
         if role == "market":
             return self.market_model
+        if role == "themes":  # sorting short answers into themes: the cheap model is enough
+            return self.crowd_model
         return self.crowd_model if self.dev_mode else self.analyst_model
 
 

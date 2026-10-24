@@ -148,6 +148,8 @@ export interface Research {
   provider?: string
   models?: { crowd: string; analyst: string }
   market?: Partial<MarketBrief> & { status: MarketStatus; reason?: string; moodShifts?: { wary?: number; excited?: number } }
+  /** How each list was grouped into themes: "model" (sorted by meaning) or "word matching". */
+  groupedBy?: { objections?: string; takeaways?: string; fixes?: string }
 }
 
 export interface AgentDetail extends Persona {

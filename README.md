@@ -46,7 +46,7 @@ Smoke test the API end to end: `powershell -File backend/scripts/smoke_run.ps1 -
 | 2 Social app | Each round a slice of the crowd reads a ranked feed and posts / replies / reposts / likes / does nothing; everyone opens the app at least once. How often someone writes at all comes from their posting habit (activity and extraversion: lurkers write on ~10% of visits, occasional repliers ~35%, regular posters ~70%); other visits can only like, repost or scroll. Score changes must cite a post | crowd |
 | 2b Exit interviews | Everyone says what they concluded: intent, takeaway, mind change, vs alternatives, recommend 0-10, the one fix | crowd |
 | 3 Research team | 10 expert lenses (incl. a competitive analyst) audit the numbers: missing KPIs, risks, caveats | analyst |
-| 4 Report | Stats computed in code (intent from what agents said, NPS, themes); the model writes verdict, market position, variants, limitations | analyst |
+| 4 Report | Stats computed in code (intent from what agents said, NPS). Objections, conclusions, fixes and named alternatives are sorted into themes by meaning with one small call each (counts and quotes from code; word matching if the model is unavailable). The model writes verdict, market position, variants, limitations | analyst; themes on crowd |
 
 Turn the market scan off per run on the Upload page. Without an API key the fake provider returns a labelled simulated
 market; if web search fails the run continues without one and says why.

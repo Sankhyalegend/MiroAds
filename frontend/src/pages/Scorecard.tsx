@@ -112,7 +112,7 @@ export default function Scorecard() {
 
       <div className="grid md:grid-cols-2 gap-5">
         <div className="card p-5">
-          <h2 className="font-semibold mb-3 flex items-center gap-2"><AlertTriangle size={16} className="text-neg" /> Top objections <span className="text-xs text-muted font-normal">clustered · ranked by frequency × influence</span></h2>
+          <h2 className="font-semibold mb-3 flex items-center gap-2"><AlertTriangle size={16} className="text-neg" /> Top objections <span className="text-xs text-muted font-normal">{R?.groupedBy?.objections === 'model' ? 'grouped by meaning' : 'clustered by shared words'} · ranked by frequency × influence</span></h2>
           <div className="space-y-3">
             {sc.objections.map((o, i) => (
               <div key={o.text + i} className="bg-panel-2 rounded-lg p-3">
@@ -268,10 +268,12 @@ function Concluded({ iv }: { iv: InterviewSummary }) {
       )}
       <div className="text-xs text-muted uppercase tracking-wide mb-1.5">What they concluded</div>
       <div className="space-y-2">
+        {/* A theme sorted by the model has a written label and an example quote; a word-matched one is labelled with one member's words. */}
         {iv.themes.slice(0, 4).map(t => (
           <div key={t.text} className="bg-panel-2 rounded-lg p-2.5 text-sm">
-            “{t.text}” <span className="text-xs text-muted">· {t.count} {t.count === 1 ? 'agent' : 'agents'}</span>
-            {(t.agent ?? t.quotes[0]?.agent) && <div className="text-xs text-muted mt-0.5">— {t.agent ?? t.quotes[0].agent}</div>}
+            <span className={t.agent ? '' : 'font-medium'}>{t.agent ? `“${t.text}”` : t.text}</span> <span className="text-xs text-muted">· {t.count} {t.count === 1 ? 'agent' : 'agents'}</span>
+            {t.agent ? <div className="text-xs text-muted mt-0.5">— {t.agent}</div>
+              : t.quotes[0] && <div className="text-xs text-muted mt-0.5">“{t.quotes[0].text}” — {t.quotes[0].agent}</div>}
           </div>
         ))}
       </div>
