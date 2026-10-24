@@ -79,7 +79,7 @@ def conn() -> sqlite3.Connection:
         _conn.execute("PRAGMA journal_mode=WAL")
         _conn.execute("PRAGMA synchronous=NORMAL")
         _conn.executescript(SCHEMA)
-        _add_missing_columns(_conn, "run_agents", {"context": "TEXT"})
+        _add_missing_columns(_conn, "run_agents", {"context": "TEXT", "interview": "TEXT"})
     return _conn
 
 
@@ -193,6 +193,10 @@ def set_context(rid: str, agent_id: int, context: dict, mood: str, persona: dict
     x("UPDATE run_agents SET context=?, mood=?, persona=? WHERE run_id=? AND agent_id=?", (j(context), mood, j(persona), rid, agent_id))
 
 
+def set_interview(rid: str, agent_id: int, interview: dict) -> None:
+    x("UPDATE run_agents SET interview=? WHERE run_id=? AND agent_id=?", (j(interview), rid, agent_id))
+
+
 def append_action(rid: str, agent_id: int, action: dict) -> None:
     r = q("SELECT actions FROM run_agents WHERE run_id=? AND agent_id=?", (rid, agent_id))
     acts = uj(r[0]["actions"], []) if r else []
@@ -202,7 +206,7 @@ def append_action(rid: str, agent_id: int, action: dict) -> None:
 
 def _agent_row(r: sqlite3.Row) -> dict:
     d = uj(r["persona"]); d["verdict"] = uj(r["verdict"]); d["finalScore"] = r["final_score"]; d["actions"] = uj(r["actions"], [])
-    d["context"] = uj(r["context"])
+    d["context"] = uj(r["context"]); d["interview"] = uj(r["interview"])
     return d
 
 

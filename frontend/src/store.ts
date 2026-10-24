@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { MarketScan, Persona, Scorecard, SimEvent, Stage, Stimulus } from './types'
+import type { ChangedMind, Intent, MarketScan, Persona, Scorecard, SimEvent, Stage, Stimulus } from './types'
 import { generatePersonas } from './mock/personas'
 import { runMockSimulation, getLastScorecard } from './mock/engine'
 import { bus } from './mock/bus'
@@ -9,14 +9,18 @@ export type Engine = 'mock' | 'live'
 
 export interface FeedItem {
   id: number
-  kind: 'post' | 'reply' | 'repost' | 'mind_change' | 'expert' | 'system'
+  kind: 'post' | 'reply' | 'repost' | 'mind_change' | 'interview' | 'expert' | 'system'
   agentId?: number
   toAgentId?: number
   text: string
   score?: number
   round?: number
+  intent?: Intent
   t: number
 }
+
+/** An exit-interview answer as streamed (the full interview is in the agent detail). */
+export interface InterviewEvent { intent: Intent; recommend: number; changedMind: ChangedMind; quote: string }
 
 /** A post in the agent app, keyed by the backend post id. Replies are posts with `replyTo`. */
 export interface AppPost {
@@ -34,7 +38,7 @@ export interface AppPost {
   mindsChanged: number
 }
 
-interface Counters { impressions: number; posts: number; replies: number; reposts: number; likes: number; mindChanges: number; exposures: number }
+interface Counters { impressions: number; posts: number; replies: number; reposts: number; likes: number; mindChanges: number; exposures: number; interviews: number }
 
 interface State {
   engine: Engine
@@ -56,6 +60,8 @@ interface State {
   /** Post ids in arrival order. */
   postOrder: number[]
   market: MarketScan | null
+  /** Exit interviews by agent id. */
+  interviews: Record<number, InterviewEvent>
   expertFindings: { name: string; role: string; finding: string }[]
   scorecard: Scorecard | null
   running: boolean
@@ -81,7 +87,7 @@ let closeWs: (() => void) | null = null
 let feedId = 0
 export const live = { scores: new Float32Array(0), sum: 0, n: 0 }
 
-const EMPTY: Counters = { impressions: 0, posts: 0, replies: 0, reposts: 0, likes: 0, mindChanges: 0, exposures: 0 }
+const EMPTY: Counters = { impressions: 0, posts: 0, replies: 0, reposts: 0, likes: 0, mindChanges: 0, exposures: 0, interviews: 0 }
 
 export const useStore = create<State>((set, get) => {
   // ---- shared ingestion: both the mock engine and the WebSocket feed events through here ----
@@ -102,6 +108,7 @@ export const useStore = create<State>((set, get) => {
       touchPosts(); posts[id] = { ...posts[id], [field]: posts[id][field] + 1 }
     }
     let stage = s.stage, round = s.round, totalRounds = s.totalRounds, costUsd = s.costUsd, error = s.error, running = s.running, market = s.market
+    let interviews = s.interviews
     for (const e of evs) {
       switch (e.kind) {
         case 'stage': stage = e.stage; break
@@ -131,6 +138,11 @@ export const useStore = create<State>((set, get) => {
           live.sum += e.to - e.from; live.scores[e.agentId] = e.to
           bump(e.postId, 'mindsChanged')
           feed.push({ id: ++feedId, kind: 'mind_change', agentId: e.agentId, toAgentId: e.causedBy, text: `changed their mind ${e.from.toFixed(1)} → ${e.to.toFixed(1)}`, score: e.to, round: e.round, t: e.t }); break
+        case 'interview':
+          counters.interviews++
+          if (interviews === s.interviews) interviews = { ...interviews }
+          interviews[e.agentId] = { intent: e.intent, recommend: e.recommend, changedMind: e.changedMind, quote: e.quote }
+          feed.push({ id: ++feedId, kind: 'interview', agentId: e.agentId, text: e.quote, intent: e.intent, t: e.t }); break
         case 'expert':
           expertFindings.push({ name: e.name, role: e.role, finding: e.finding })
           feed.push({ id: ++feedId, kind: 'expert', text: `${e.name} (${e.role}): ${e.finding}`, t: e.t }); break
@@ -156,7 +168,7 @@ export const useStore = create<State>((set, get) => {
           break
       }
     }
-    set({ counters, feed: feed.slice(-250), posts, postOrder, market, expertFindings, stage, round, totalRounds, costUsd, error, running, liveMean: live.n ? live.sum / live.n : 0 })
+    set({ counters, feed: feed.slice(-250), posts, postOrder, market, interviews, expertFindings, stage, round, totalRounds, costUsd, error, running, liveMean: live.n ? live.sum / live.n : 0 })
   }
 
   const flush = () => { flushTimer = null; const evs = pending; pending = []; applyEvents(evs) }
@@ -170,7 +182,7 @@ export const useStore = create<State>((set, get) => {
     live.scores = new Float32Array(personas.length).fill(-1)
     live.sum = 0; live.n = 0
     pending = []
-    set({ personas, stage: 'idle', round: 0, totalRounds: rounds, running: true, counters: { ...EMPTY }, feed: [], posts: {}, postOrder: [], market: null, expertFindings: [], scorecard: null, liveMean: 0, costUsd: 0, error: null })
+    set({ personas, stage: 'idle', round: 0, totalRounds: rounds, running: true, counters: { ...EMPTY }, feed: [], posts: {}, postOrder: [], market: null, interviews: {}, expertFindings: [], scorecard: null, liveMean: 0, costUsd: 0, error: null })
   }
 
   const attachWs = (runId: string, fromSeq: number) => {
@@ -199,6 +211,7 @@ export const useStore = create<State>((set, get) => {
     posts: {},
     postOrder: [],
     market: null,
+    interviews: {},
     expertFindings: [],
     scorecard: null,
     running: false,
@@ -262,6 +275,6 @@ export const useStore = create<State>((set, get) => {
       if (engine === 'live' && runId) api.stopRun(runId).catch(() => {})
       set({ running: false })
     },
-    reset: () => { stopper?.stop(); stopper = null; closeWs?.(); closeWs = null; set({ stage: 'idle', running: false, scorecard: null, feed: [], posts: {}, postOrder: [], market: null, personas: [], runId: null, error: null }) },
+    reset: () => { stopper?.stop(); stopper = null; closeWs?.(); closeWs = null; set({ stage: 'idle', running: false, scorecard: null, feed: [], posts: {}, postOrder: [], market: null, interviews: {}, personas: [], runId: null, error: null }) },
   }
 })

@@ -1,8 +1,8 @@
 import { memo, useMemo, useState } from 'react'
-import { MessageSquare, Repeat2, Heart, Sparkles, Search, Store, Newspaper } from 'lucide-react'
-import { useStore, type AppPost } from '../store'
-import { GROUP_COLORS, PROFESSION_GROUPS, hexToCss } from '../mock/personas'
-import type { Persona } from '../types'
+import { MessageSquare, Repeat2, Heart, Sparkles, Search, Store, Newspaper, Mic } from 'lucide-react'
+import { useStore, type AppPost, type InterviewEvent } from '../store'
+import { GROUP_COLORS, INTENT_COLOR, PROFESSION_GROUPS, hexToCss } from '../mock/personas'
+import type { Intent, Persona } from '../types'
 
 const col = (s: number) => s >= 6.5 ? '#3ddc97' : s >= 4 ? '#f5c242' : '#ff6b6b'
 const PAGE = 30
@@ -13,16 +13,18 @@ interface Thread { root: AppPost; replies: AppPost[]; last: number; engagement: 
 
 const stanceOk = (s: number, st: Stance) => st === 'all' || (st === 'for' ? s >= 6.5 : st === 'against' ? s < 4 : s >= 4 && s < 6.5)
 
-type Tab = 'feed' | 'market'
+type Tab = 'feed' | 'takes' | 'market'
 
 /** The social app the agents use during the discussion (threads, reposts, likes, who changed whose mind),
- *  plus what was already on the market when they looked. */
+ *  what each of them concluded in the exit interview, and what was already on the market when they looked. */
 export default function AgentApp({ onSelect }: { onSelect: (agentId: number) => void }) {
   const [tab, setTab] = useState<Tab>('feed')
   const postCount = useStore(s => s.postOrder.length)
+  const takeCount = useStore(s => s.counters.interviews)
   const market = useStore(s => s.market)
   const tabs: { id: Tab; label: string; icon: React.ReactNode; note?: string }[] = [
     { id: 'feed', label: 'Feed', icon: <MessageSquare size={13} />, note: postCount ? postCount.toLocaleString() : undefined },
+    { id: 'takes', label: 'Final takes', icon: <Mic size={13} />, note: takeCount ? takeCount.toLocaleString() : undefined },
     { id: 'market', label: 'Market', icon: <Store size={13} />, note: market?.status === 'ok' ? `${market.brief?.competitors.length ?? 0} alternatives` : market?.status },
   ]
   return (
@@ -35,7 +37,86 @@ export default function AgentApp({ onSelect }: { onSelect: (agentId: number) => 
           </button>
         ))}
       </div>
-      {tab === 'feed' ? <Feed onSelect={onSelect} /> : <Market />}
+      {tab === 'feed' ? <Feed onSelect={onSelect} /> : tab === 'takes' ? <FinalTakes onSelect={onSelect} /> : <Market />}
+    </div>
+  )
+}
+
+const TAKES_PAGE = 40
+
+/** Exit interviews: everyone's conclusion once the discussion was over. */
+function FinalTakes({ onSelect }: { onSelect: (agentId: number) => void }) {
+  const interviews = useStore(s => s.interviews)
+  const personas = useStore(s => s.personas)
+  const [intent, setIntent] = useState<'all' | Intent>('all')
+  const [group, setGroup] = useState('all')
+  const [q, setQ] = useState('')
+  const [limit, setLimit] = useState(TAKES_PAGE)
+
+  const rows = useMemo(() => Object.entries(interviews)
+    .map(([id, iv]) => ({ a: personas[Number(id)], iv }))
+    .filter((r): r is { a: Persona; iv: InterviewEvent } => !!r.a)
+    .sort((x, y) => y.a.influence - x.a.influence), [interviews, personas])
+  const n = rows.length
+  if (!n) return <div className="text-muted text-sm text-center mt-10 px-6">Exit interviews start when the discussion ends: everyone is asked what they now conclude.</div>
+
+  const count = (i: Intent) => rows.filter(r => r.iv.intent === i).length
+  const prom = rows.filter(r => r.iv.recommend >= 9).length, det = rows.filter(r => r.iv.recommend <= 6).length
+  const up = rows.filter(r => r.iv.changedMind === 'More positive').length, down = rows.filter(r => r.iv.changedMind === 'More negative').length
+  const ql = q.trim().toLowerCase()
+  const visible = rows.filter(r => (intent === 'all' || r.iv.intent === intent) && (group === 'all' || r.a.professionGroup === group)
+    && (!ql || r.iv.quote.toLowerCase().includes(ql) || r.a.name.toLowerCase().includes(ql)))
+
+  return (
+    <div className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div className="card p-4 space-y-2">
+        <div className="flex h-3 rounded-full overflow-hidden bg-panel-2">
+          {(['Would buy/use', 'Maybe', 'Would not'] as Intent[]).map(i => <div key={i} style={{ width: `${(count(i) / n) * 100}%`, background: INTENT_COLOR[i] }} title={`${i}: ${count(i)}`} />)}
+        </div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+          {(['Would buy/use', 'Maybe', 'Would not'] as Intent[]).map(i => <span key={i}><b style={{ color: INTENT_COLOR[i] }}>{Math.round((count(i) / n) * 100)}%</b> {i.toLowerCase()}</span>)}
+          <span className="text-muted">·</span>
+          <span title="Promoters (9-10) minus detractors (0-6)">NPS <b>{Math.round(((prom - det) / n) * 100)}</b></span>
+          <span className="text-muted">· changed their mind: {up} up, {down} down · {n.toLocaleString()} interviewed</span>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <select className="input input-sm" value={intent} onChange={e => { setIntent(e.target.value as 'all' | Intent); setLimit(TAKES_PAGE) }} aria-label="Intent">
+          <option value="all">Everyone</option>
+          <option value="Would buy/use">Would buy/use</option>
+          <option value="Maybe">Maybe</option>
+          <option value="Would not">Would not</option>
+        </select>
+        <select className="input input-sm" value={group} onChange={e => { setGroup(e.target.value); setLimit(TAKES_PAGE) }} aria-label="Profession group">
+          <option value="all">All professions</option>
+          {PROFESSION_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}
+        </select>
+        <div className="relative flex-1 min-w-[150px]">
+          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
+          <input className="input input-sm" style={{ width: '100%', paddingLeft: 24 }} placeholder="Search what they said" value={q} onChange={e => { setQ(e.target.value); setLimit(TAKES_PAGE) }} />
+        </div>
+        <span className="text-muted">{visible.length.toLocaleString()} shown · most influential first</span>
+      </div>
+      <div className="grid md:grid-cols-2 gap-2">
+        {visible.slice(0, limit).map(({ a, iv }) => (
+          <button key={a.id} onClick={() => onSelect(a.id)} className="card p-3 text-left cursor-pointer">
+            <div className="flex items-center gap-1.5 text-xs min-w-0">
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: hexToCss(GROUP_COLORS[a.professionGroup]) }} />
+              <span className="font-semibold truncate">{a.name}</span>
+              <span className="text-muted truncate">· {a.profession} · {a.region}</span>
+            </div>
+            <div className="text-sm mt-1 leading-snug">“{iv.quote}”</div>
+            <div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-[11px]">
+              <span className="chip" style={{ borderColor: INTENT_COLOR[iv.intent], color: INTENT_COLOR[iv.intent] }}>{iv.intent}</span>
+              <span className="text-muted">recommends {iv.recommend}/10</span>
+              {iv.changedMind !== 'No' && <span className="text-muted">· changed mind: {iv.changedMind.toLowerCase()}</span>}
+            </div>
+          </button>
+        ))}
+      </div>
+      {visible.length > limit && (
+        <button className="btn btn-ghost w-full justify-center text-xs" onClick={() => setLimit(l => l + TAKES_PAGE)}>Show more ({(visible.length - limit).toLocaleString()} more)</button>
+      )}
     </div>
   )
 }

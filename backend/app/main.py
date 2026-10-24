@@ -136,7 +136,7 @@ def run_view(rid: str) -> dict:
     if not r:
         raise HTTPException(404, "run not found")
     agents = db.get_run_agents(rid)
-    personas = [{k: v for k, v in a.items() if k not in ("verdict", "finalScore", "actions", "context")} for a in agents]
+    personas = [{k: v for k, v in a.items() if k not in ("verdict", "finalScore", "actions", "context", "interview")} for a in agents]
     return {"id": rid, "status": r["status"], "stage": r["stage"], "costUsd": round(r["cost_usd"], 4), "tokens": r["tokens"], "error": r["error"],
             "config": r["config"], "stimulus": db.get_stimulus(r["stimulus_id"]), "personas": personas, "lastSeq": db.max_seq(rid),
             "hasScorecard": db.get_scorecard(rid) is not None}

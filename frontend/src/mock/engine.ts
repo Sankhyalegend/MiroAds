@@ -1,7 +1,9 @@
 import type {
   Persona, Stimulus, StimulusType, Verdict, SimEvent, Scorecard, DimensionScore, SegmentScore,
-  Objection, MissingKpi, Variant, MarketBrief,
+  Objection, MissingKpi, Variant, MarketBrief, Intent, ChangedMind, InterviewSummary,
 } from '../types'
+
+type MockInterview = { intent: Intent; recommend: number; changedMind: ChangedMind; quote: string; better: 'Better' | 'About the same' | 'Worse' | "Don't know any"; alt: string; fix: string }
 import { mulberry32, PROFESSION_GROUPS } from './personas'
 
 /**
@@ -375,8 +377,33 @@ export function runMockSimulation(opts: EngineOptions): { stop: () => void } {
     }
   }
 
+  // ---- Stage 2b: exit interviews. Stated intent is more conservative than the score, as in real panels. ----
+  const interviews = new Map<number, MockInterview>()
+  const interviewsStart = socialStart + rounds * msPerRound + 300
+  const interviewMs = Math.min(3000, 300 + personas.length * 1.5)
+  const alts = MOCK_MARKET[stimulus.type].competitors.map(c => c.name)
+  later(interviewsStart, () => onEvent({ kind: 'stage', stage: 'interviews', t: now() }))
+  personas.forEach((p, i) => {
+    later(interviewsStart + 100 + (i / personas.length) * interviewMs, () => {
+      const v = verdicts.get(p.id); if (!v) return
+      const s = scores.get(p.id) ?? v.score, d = s - (initialScores.get(p.id) ?? s)
+      const intent: Intent = (s >= 7.5 && rng() < 0.5) || (s >= 6.5 && rng() < 0.15) ? 'Would buy/use' : s >= 4.5 ? 'Maybe' : 'Would not'
+      const knowsAlts = techScore(p.tech) >= 0.55 || rng() < 0.4
+      const iv: MockInterview = {
+        intent, recommend: Math.round(Math.max(0, Math.min(10, s + (rng() - 0.5) * 2))),
+        changedMind: Math.abs(d) < 0.5 ? 'No' : d > 0 ? 'More positive' : 'More negative',
+        quote: s >= 6.5 ? `${v.reaction}. I'd ${intent === 'Would buy/use' ? 'get one' : 'think about it'}.` : `${v.objection}.`,
+        better: !knowsAlts ? "Don't know any" : s >= 7 ? 'Better' : s >= 5 ? 'About the same' : 'Worse',
+        alt: knowsAlts ? alts[Math.floor(rng() * alts.length)] : 'nothing',
+        fix: v.missing,
+      }
+      interviews.set(p.id, iv)
+      onEvent({ kind: 'interview', agentId: p.id, intent: iv.intent, recommend: iv.recommend, changedMind: iv.changedMind, quote: iv.quote, t: now() })
+    })
+  })
+
   // ---- Stage 3: experts ----
-  const expertsStart = socialStart + rounds * msPerRound + 300
+  const expertsStart = interviewsStart + interviewMs + 500
   later(expertsStart, () => onEvent({ kind: 'stage', stage: 'experts', t: now() }))
   bank.kpis.forEach((k, i) => {
     const ex = EXPERTS[i % EXPERTS.length]
@@ -392,7 +419,7 @@ export function runMockSimulation(opts: EngineOptions): { stop: () => void } {
   })
 
   // Expose a scorecard builder on the returned handle via closure (store calls buildScorecard after 'done').
-  ;(runMockSimulation as unknown as { last?: () => Scorecard }).last = () => buildScorecard(stimulus, personas, verdicts, scores, initialScores, bank)
+  ;(runMockSimulation as unknown as { last?: () => Scorecard }).last = () => buildScorecard(stimulus, personas, verdicts, scores, initialScores, bank, interviews)
 
   return { stop: () => { stopped = true; timers.forEach(clearTimeout) } }
 }
@@ -402,9 +429,33 @@ export function getLastScorecard(): Scorecard | null {
   return fn ? fn() : null
 }
 
+function summarizeInterviews(personas: Persona[], interviews: Map<number, MockInterview>): InterviewSummary | null {
+  const rows = personas.filter(p => interviews.has(p.id)).map(p => ({ p, iv: interviews.get(p.id)! }))
+  const n = rows.length
+  if (!n) return null
+  const pct = (c: number) => Math.round((c / n) * 100)
+  const count = <T,>(f: (r: typeof rows[number]) => T) => { const m = new Map<T, number>(); rows.forEach(r => m.set(f(r), (m.get(f(r)) ?? 0) + 1)); return m }
+  const prom = rows.filter(r => r.iv.recommend >= 9).length, det = rows.filter(r => r.iv.recommend <= 6).length
+  const ch = count(r => r.iv.changedMind), vs = count(r => r.iv.better)
+  const who = (p: Persona) => `${p.name}, ${p.profession}, ${p.region}`
+  const top = (m: Map<string, number>, k: number) => [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, k)
+  const altCounts = count(r => r.iv.alt); altCounts.delete('nothing')
+  const fixCounts = new Map<string, number>(); rows.filter(r => r.iv.intent !== 'Would buy/use').forEach(r => fixCounts.set(r.iv.fix, (fixCounts.get(r.iv.fix) ?? 0) + 1))
+  const themeCounts = count(r => r.iv.quote)
+  return {
+    n, nps: Math.round(((prom - det) / n) * 100), promoters: pct(prom), passives: pct(n - prom - det), detractors: pct(det),
+    changedMind: { no: pct(ch.get('No') ?? 0), positive: pct(ch.get('More positive') ?? 0), negative: pct(ch.get('More negative') ?? 0) },
+    vsAlternatives: { better: pct(vs.get('Better') ?? 0), same: pct(vs.get('About the same') ?? 0), worse: pct(vs.get('Worse') ?? 0), unknown: pct(vs.get("Don't know any") ?? 0) },
+    alternatives: top(altCounts, 6).map(([name, c]) => ({ name, count: c })),
+    themes: top(themeCounts, 4).map(([text, c]) => ({ text, count: c, quotes: rows.filter(r => r.iv.quote === text).slice(0, 2).map(r => ({ agent: who(r.p), text })) })),
+    fixes: top(fixCounts, 5).map(([text, c]) => ({ text, count: c })),
+    quotes: (['Would buy/use', 'Maybe', 'Would not'] as Intent[]).flatMap(i => rows.filter(r => r.iv.intent === i).sort((a, b) => b.p.influence - a.p.influence).slice(0, 3).map(r => ({ agent: who(r.p), intent: i, text: r.iv.quote }))),
+  }
+}
+
 function buildScorecard(
   stimulus: Stimulus, personas: Persona[], verdicts: Map<number, Verdict>,
-  scores: Map<number, number>, initial: Map<number, number>, bank: Bank,
+  scores: Map<number, number>, initial: Map<number, number>, bank: Bank, interviews: Map<number, MockInterview>,
 ): Scorecard {
   const n = personas.length
   const finalScores = personas.map(p => scores.get(p.id) ?? 5)
@@ -420,12 +471,14 @@ function buildScorecard(
   })
   const overall = Math.round(dimensions.reduce((a, d) => a + d.score * d.weight, 0) * 10) / 10
 
+  // Intent is what they said in the exit interview; score cut-offs only if the run stopped before interviews.
+  const intentOf = (p: Persona): Intent => interviews.get(p.id)?.intent ?? intentFor(scores.get(p.id) ?? 5)
   const seg = (group: string, key: (p: Persona) => string): SegmentScore[] => {
     const m = new Map<string, { sum: number; n: number; buy: number }>()
     personas.forEach(p => {
       const k = key(p); const s = scores.get(p.id) ?? 5
       const cur = m.get(k) ?? { sum: 0, n: 0, buy: 0 }
-      cur.sum += s; cur.n++; if (s >= 6.5) cur.buy++
+      cur.sum += s; cur.n++; if (intentOf(p) === 'Would buy/use') cur.buy++
       m.set(k, cur)
     })
     return [...m.entries()].map(([segment, v]) => ({ segment, group, score: Math.round((v.sum / v.n) * 10) / 10, n: v.n, intent: Math.round((v.buy / v.n) * 100) }))
@@ -455,7 +508,8 @@ function buildScorecard(
   personas.forEach(p => { const v = verdicts.get(p.id); if (v) missCount.set(v.missing, (missCount.get(v.missing) ?? 0) + 1) })
   const missing = [...missCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([m]) => m)
 
-  const buy = finalScores.filter(s => s >= 6.5).length, no = finalScores.filter(s => s < 4).length
+  const stated = personas.map(intentOf)
+  const buy = stated.filter(i => i === 'Would buy/use').length, no = stated.filter(i => i === 'Would not').length
   const agreement = Math.round(Math.max(0, 1 - sd / 3.2) * 100)
   const verdict = overall >= 7 ? 'Strong: ship it, fix the gaps' : overall >= 5.5 ? 'Promising but not there yet' : overall >= 4 ? 'Weak: rework before spending on it' : 'Do not proceed as is'
 
@@ -477,5 +531,8 @@ function buildScorecard(
       note: `${n} agents, ${agreement}% agreement. Mock engine: opinions derived from persona attributes, not an LLM.`,
     },
     intentSplit: { buy: Math.round((buy / n) * 100), maybe: Math.round(((n - buy - no) / n) * 100), no: Math.round((no / n) * 100) },
+    intentSource: interviews.size ? 'exit interviews' : 'score cut-offs',
+    interviews: summarizeInterviews(personas, interviews),
+    marketPosition: `Simulated: the crowd compared it with ${MOCK_MARKET[stimulus.type].competitors[0].name.toLowerCase()} and cheaper workarounds; mock engine, not a real market read.`,
   }
 }

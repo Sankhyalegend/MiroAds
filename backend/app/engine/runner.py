@@ -11,6 +11,7 @@ from ..llm import Meter, llm
 from ..personas.sampler import composition, sample_crowd
 from .events import bus
 from .experts import run_experts
+from .interview import run_interviews
 from .judge import compute_stats, run_judge
 from .market import apply_market, run_market_scan
 from .social import run_social
@@ -95,8 +96,14 @@ async def execute_run(run_id: str) -> None:
         posts = state.get("posts", [])
         mind_changes = sum(1 for e in db.events_from(run_id, 0) if e["kind"] == "mind_change")
 
+        # ---- stage 2b: exit interviews, everyone says what they now conclude ----
+        interviews: dict[int, dict] = {}
+        if not state["stopped"]:
+            await _set_stage(run_id, "interviews")
+            interviews = await run_interviews(run_id, stimulus, crowd, verdicts, final, posts, meter, state)
+
         # ---- stats (code) ----
-        stats = compute_stats(crowd, verdicts, final, mind_changes, posts)
+        stats = compute_stats(crowd, verdicts, final, mind_changes, posts, interviews)
         comp = composition(crowd)
 
         # ---- stage 3 ----

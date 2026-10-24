@@ -7,6 +7,7 @@ import random
 from ..llm import Meter, llm
 from .banks import KPI_HINTS, RESEARCH_TEAM
 from .events import bus
+from .judge import interview_summary
 from .market import market_summary
 from .stimulus import stimulus_block
 
@@ -58,10 +59,10 @@ async def run_experts(run_id: str, stimulus: dict, stats: dict, top_posts: list[
     posts_txt = "\n".join(f"- {p['author']} ({p['profession']}, {p['region']}, score {p['score']:.1f}): \"{p['text']}\" [{p['replies']} replies, {p['reposts']} reposts, {p.get('likes', 0)} likes]" for p in top_posts[:20])
     seg = "\n".join(f"  {s['group']}/{s['segment']}: {s['score']:.1f} (n={s['n']}, {s['intent']}% intent)" for s in stats["segments"][:28])
     obj = "\n".join(f"  {o['count']}x (influence {o['influence']:.1f}): {o['text']}" for o in stats["objections"][:8])
-    data = (f"CROWD RESULTS (n={stats['n']}):\n- Mean score {stats['mean']:.2f}/10, std-dev {stats['sd']:.2f}; intent buy/maybe/no = {stats['intent']['buy']}/{stats['intent']['maybe']}/{stats['intent']['no']}%\n"
+    data = (f"CROWD RESULTS (n={stats['n']}):\n- Mean score {stats['mean']:.2f}/10, std-dev {stats['sd']:.2f}; intent buy/maybe/no = {stats['intent']['buy']}/{stats['intent']['maybe']}/{stats['intent']['no']}% (stated, from {stats['intent_source']})\n"
             f"- Opinion shift during discussion: {stats['shift']:+.2f}; mind changes: {stats['mind_changes']}\n- Segment scores:\n{seg}\n- Top objections:\n{obj}\n"
             f"- Most cited missing items: {', '.join(stats['missing'][:5])}\n- Most discussed posts:\n{posts_txt}\n"
-            f"- KPI families typical for this stimulus type: {KPI_HINTS[stimulus['type']]}\n\n{market_summary(market)}")
+            f"- KPI families typical for this stimulus type: {KPI_HINTS[stimulus['type']]}\n\n{interview_summary(stats)}\n\n{market_summary(market)}")
     results: list[dict] = []
 
     async def one(expert: dict):

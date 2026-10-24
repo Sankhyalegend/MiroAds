@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, RotateCcw, Download, AlertTriangle, Target, FlaskConical, Quote, Microscope, Users, Store } from 'lucide-react'
+import { ArrowLeft, RotateCcw, Download, AlertTriangle, Target, FlaskConical, Quote, Microscope, Users, Store, Mic } from 'lucide-react'
 import { useStore } from '../store'
 import { api } from '../api'
-import type { Research } from '../types'
+import type { InterviewSummary, Research } from '../types'
 
 const col = (s: number) => s >= 7 ? '#3ddc97' : s >= 5 ? '#f5c242' : '#ff6b6b'
 
@@ -67,6 +67,9 @@ export default function Scorecard() {
             <Mini label="Would buy / back" value={`${sc.intentSplit.buy}%`} c="#3ddc97" />
             <Mini label="On the fence" value={`${sc.intentSplit.maybe}%`} c="#f5c242" />
             <Mini label="Would not" value={`${sc.intentSplit.no}%`} c="#ff6b6b" />
+          </div>
+          <div className="text-[11px] text-muted -mt-1">
+            {sc.intentSource ? `What they said they would do, from ${sc.intentSource}.` : 'Estimated from score cut-offs (older report, before exit interviews).'}
           </div>
           <div className="grid grid-cols-3 gap-3 text-sm">
             <div className="bg-panel-2 rounded-lg p-3"><div className="text-xs text-muted">Polarization (std-dev)</div><div className="font-semibold">{sc.polarization.toFixed(2)} <span className="text-xs text-muted font-normal">{sc.polarization > 2.4 ? 'divisive' : sc.polarization > 1.6 ? 'mixed' : 'consensus'}</span></div></div>
@@ -152,9 +155,10 @@ export default function Scorecard() {
         </div>
       </div>
 
-      {mk && mk.status !== 'off' && (
+      {(sc.interviews || (mk && mk.status !== 'off')) && (
         <div className="grid md:grid-cols-2 gap-5">
-          <div className="card p-5">
+          {sc.interviews && <Concluded iv={sc.interviews} />}
+          {mk && mk.status !== 'off' && <div className="card p-5">
             <h2 className="font-semibold mb-3 flex items-center gap-2"><Store size={16} className="text-accent" /> Market context
               <span className="text-xs text-muted font-normal">{mk.status === 'simulated' ? 'simulated, not real market data' : mk.status === 'ok' ? mk.category : 'scan unavailable'}</span></h2>
             {sc.marketPosition && <p className="text-sm leading-relaxed mb-3">{sc.marketPosition}</p>}
@@ -182,7 +186,7 @@ export default function Scorecard() {
                 {mk.moodShifts && (mk.moodShifts.wary || mk.moodShifts.excited) ? <div className="text-xs text-muted mt-2">The news made {mk.moodShifts.wary ?? 0} agents wary and {mk.moodShifts.excited ?? 0} excited before they judged it.</div> : null}
               </>
             )}
-          </div>
+          </div>}
         </div>
       )}
 
@@ -244,6 +248,40 @@ function Gauge({ value }: { value: number }) {
       <text x={90} y={84} textAnchor="middle" fill="#e6ebf5" fontSize={40} fontWeight={700}>{value.toFixed(1)}</text>
       <text x={90} y={108} textAnchor="middle" fill="#8b96ad" fontSize={12}>out of 10</text>
     </svg>
+  )
+}
+
+/** Exit interviews: what the crowd concluded once the discussion was over. */
+function Concluded({ iv }: { iv: InterviewSummary }) {
+  const v = iv.vsAlternatives
+  return (
+    <div className="card p-5">
+      <h2 className="font-semibold mb-3 flex items-center gap-2"><Mic size={16} className="text-pos" /> What the crowd concluded <span className="text-xs text-muted font-normal">exit interviews · {iv.n.toLocaleString()} agents</span></h2>
+      <div className="grid grid-cols-3 gap-2 text-center mb-3">
+        <Mini label="NPS (recommend 9-10 minus 0-6)" value={`${iv.nps > 0 ? '+' : ''}${iv.nps}`} c={iv.nps >= 0 ? '#3ddc97' : '#ff6b6b'} />
+        <Mini label="Changed mind: up / down" value={`${iv.changedMind.positive}% / ${iv.changedMind.negative}%`} c="#e6ebf5" />
+        <Mini label="Say it beats what they use" value={`${v.better}%`} c={v.better >= v.worse ? '#3ddc97' : '#f5c242'} />
+      </div>
+      <div className="text-xs text-muted mb-2">Versus what they use or know: better {v.better}% · same {v.same}% · worse {v.worse}% · know none {v.unknown}%</div>
+      {iv.alternatives.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 mb-3"><span className="text-xs text-muted">Would choose instead:</span>{iv.alternatives.map(a => <span key={a.name} className="chip">{a.name} · {a.count}</span>)}</div>
+      )}
+      <div className="text-xs text-muted uppercase tracking-wide mb-1.5">What they concluded</div>
+      <div className="space-y-2">
+        {iv.themes.slice(0, 4).map(t => (
+          <div key={t.text} className="bg-panel-2 rounded-lg p-2.5 text-sm">
+            “{t.text}” <span className="text-xs text-muted">· {t.count} {t.count === 1 ? 'agent' : 'agents'}</span>
+            {t.quotes[0] && <div className="text-xs text-muted mt-0.5">— {t.quotes[0].agent}</div>}
+          </div>
+        ))}
+      </div>
+      {iv.fixes && iv.fixes.length > 0 && (
+        <>
+          <div className="text-xs text-muted uppercase tracking-wide mt-3 mb-1.5">What would win the rest over</div>
+          <div className="flex flex-wrap gap-1.5">{iv.fixes.map(f => <span key={f.text} className="chip">{f.text} · {f.count}</span>)}</div>
+        </>
+      )}
+    </div>
   )
 }
 

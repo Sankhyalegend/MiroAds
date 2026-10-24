@@ -89,10 +89,42 @@ export type SimEvent =
   | { kind: 'expert'; name: string; role: string; finding: string; t: number }
   | { kind: 'crowd_ready'; n: number; t: number }
   | ({ kind: 'market'; t: number } & MarketScan)
+  /** Exit interview: what the agent concluded once the discussion was over. */
+  | { kind: 'interview'; agentId: number; intent: Intent; recommend: number; changedMind: ChangedMind; quote: string; t: number }
   | { kind: 'error'; message: string; t: number }
   | { kind: 'done'; t: number; costUsd?: number; failed?: boolean }
 
-export type Stage = 'idle' | 'market' | 'impressions' | 'social' | 'experts' | 'judge' | 'done'
+export type Stage = 'idle' | 'market' | 'impressions' | 'social' | 'interviews' | 'experts' | 'judge' | 'done'
+export type Intent = 'Would buy/use' | 'Maybe' | 'Would not'
+export type ChangedMind = 'No' | 'More positive' | 'More negative'
+
+export interface Interview {
+  intent: Intent
+  takeaway: string
+  changedMind: ChangedMind
+  whatChangedIt: string
+  vsAlternatives: 'Better' | 'About the same' | 'Worse' | "Don't know any"
+  alternativeNamed: string
+  /** 0..10 */
+  recommend: number
+  oneFix: string
+  quote: string
+}
+
+/** Exit interviews summarised for the report. Percentages are of interviewed agents. */
+export interface InterviewSummary {
+  n: number
+  nps: number
+  promoters: number
+  passives: number
+  detractors: number
+  changedMind: { no: number; positive: number; negative: number }
+  vsAlternatives: { better: number; same: number; worse: number; unknown: number }
+  alternatives: { name: string; count: number }[]
+  themes: { text: string; count: number; quotes: { agent: string; text: string }[] }[]
+  fixes?: { text: string; count: number }[]
+  quotes: { agent: string; intent: Intent; text: string }[]
+}
 
 export interface DimensionScore { name: string; score: number; weight: number; note: string }
 export interface SegmentScore { segment: string; group: string; score: number; n: number; intent: number }
@@ -126,6 +158,7 @@ export interface AgentDetail extends Persona {
   actions?: { round: number; action: string; text: string; target?: number | null; score: number; why?: string }[]
   /** What they knew about the market, and their mood before the news shifted it. */
   context?: { knows: string[]; owns?: string | null; newsSeen: string[]; moodBefore?: string; moodReason?: string } | null
+  interview?: Interview | null
 }
 
 export interface Scorecard {
@@ -147,4 +180,7 @@ export interface Scorecard {
   shift: number
   confidence: { sample: number; agreement: number; label: string; note: string }
   intentSplit: { buy: number; maybe: number; no: number }
+  /** Where the intent split comes from, e.g. "exit interviews". Older reports used score cut-offs. */
+  intentSource?: string
+  interviews?: InterviewSummary | null
 }

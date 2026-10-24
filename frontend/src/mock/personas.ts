@@ -1,5 +1,5 @@
 import type {
-  Persona, ProfessionGroup, Ideology, EconomicStance, TechAdoption, IncomeBand, AgeBand, DecisionRole,
+  Persona, ProfessionGroup, Ideology, EconomicStance, TechAdoption, IncomeBand, AgeBand, DecisionRole, Intent,
 } from '../types'
 
 // Deterministic PRNG so a crowd of N is the same crowd every time (good for A/B comparisons).
@@ -103,3 +103,5 @@ export const GROUP_COLORS: Record<ProfessionGroup, number> = {
 }
 
 export function hexToCss(n: number) { return '#' + n.toString(16).padStart(6, '0') }
+
+export const INTENT_COLOR: Record<Intent, string> = { 'Would buy/use': '#3ddc97', Maybe: '#f5c242', 'Would not': '#ff6b6b' }

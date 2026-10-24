@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 import random
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 import numpy as np
 from sklearn.cluster import AgglomerativeClustering
@@ -70,19 +70,95 @@ def _cluster_objections(items: list[tuple[str, float, str]], max_clusters: int =
     return out[:6]
 
 
-def compute_stats(agents: list[dict], verdicts: dict[int, dict], final: dict[int, float], mind_changes: int, posts: list[dict]) -> dict:
+INTENTS = ("Would buy/use", "Maybe", "Would not")
+
+
+def _stated_intents(agents: list[dict], verdicts: dict[int, dict], final: dict[int, float], interviews: dict[int, dict]) -> tuple[list[str], str]:
+    """Per agent: what they said in the exit interview, else what they said first, else the score cut-off."""
+    out: list[str] = []
+    src: Counter = Counter()
+    for a in agents:
+        iv, v = interviews.get(a["id"]), verdicts.get(a["id"]) or {}
+        if iv:
+            out.append(iv["intent"]); src["exit interviews"] += 1
+        elif v.get("intent") in INTENTS:
+            out.append(v["intent"]); src["first impressions"] += 1
+        else:
+            s = final.get(a["id"], v.get("score", 5.0))
+            out.append("Would buy/use" if s >= 6.5 else "Maybe" if s >= 4 else "Would not"); src["score cut-offs"] += 1
+    top = src.most_common(1)[0][0] if src else "score cut-offs"
+    return out, top if src[top] == len(agents) else ", ".join(f"{k} ({v})" for k, v in src.most_common())
+
+
+def _pct(c: int, n: int) -> int:
+    return round(c / n * 100) if n else 0
+
+
+def _interview_stats(agents: list[dict], interviews: dict[int, dict]) -> dict | None:
+    rows = [(a, interviews[a["id"]]) for a in agents if a["id"] in interviews]
+    if not rows:
+        return None
+    n = len(rows)
+    rec = [iv["recommend"] for _, iv in rows]
+    prom, det = sum(1 for r in rec if r >= 9), sum(1 for r in rec if r <= 6)
+    ch = Counter(iv["changedMind"] for _, iv in rows)
+    vs = Counter(iv["vsAlternatives"] for _, iv in rows)
+    alts: dict[str, list] = {}
+    for _, iv in rows:
+        name = re.sub(r"\s+", " ", iv.get("alternativeNamed", "")).strip().rstrip(".")
+        if name and name.lower() not in ("nothing", "none", "n/a", "no", "nothing really", "not sure"):
+            alts.setdefault(name.lower(), [name, 0])[1] += 1
+    who = lambda a: f"{a['name']}, {a['profession']}, {a['region']}"
+    themes = _cluster_objections([(iv["takeaway"], a["influence"], who(a)) for a, iv in rows])
+    fixes = _cluster_objections([(iv["oneFix"], a["influence"], who(a)) for a, iv in rows
+                                 if iv["intent"] != "Would buy/use" and iv.get("oneFix", "").strip().lower().rstrip(".") not in ("nothing", "none", "")])
+    quotes = []
+    for intent in INTENTS:
+        for a, iv in sorted((r for r in rows if r[1]["intent"] == intent), key=lambda r: -r[0]["influence"])[:3]:
+            quotes.append({"agent": who(a), "intent": intent, "text": iv["quote"]})
+    return {
+        "n": n, "nps": round((prom - det) / n * 100), "promoters": _pct(prom, n), "passives": _pct(n - prom - det, n), "detractors": _pct(det, n),
+        "changedMind": {"no": _pct(ch["No"], n), "positive": _pct(ch["More positive"], n), "negative": _pct(ch["More negative"], n)},
+        "vsAlternatives": {"better": _pct(vs["Better"], n), "same": _pct(vs["About the same"], n), "worse": _pct(vs["Worse"], n), "unknown": _pct(vs["Don't know any"], n)},
+        "alternatives": [{"name": d, "count": c} for d, c in sorted(alts.values(), key=lambda x: -x[1])[:6]],
+        "themes": [{"text": t["text"], "count": t["count"], "quotes": t["quotes"]} for t in themes],
+        "fixes": [{"text": f["text"], "count": f["count"]} for f in fixes[:5]],
+        "quotes": quotes,
+    }
+
+
+def interview_summary(stats: dict) -> str:
+    """Exit-interview results as text for the research team and the report author."""
+    iv = stats.get("interviews")
+    if not iv:
+        return "EXIT INTERVIEWS: none (the run stopped before them)."
+    alts = ", ".join(f"{a['name']} ({a['count']})" for a in iv["alternatives"]) or "none named"
+    themes = "\n".join(f"  {t['count']}x {t['text']}" for t in iv["themes"][:5])
+    fixes = "; ".join(f"{f['text']} ({f['count']})" for f in iv["fixes"]) or "none"
+    return (f"EXIT INTERVIEWS (n={iv['n']}, asked after the discussion; the intent split is what they said here): NPS {iv['nps']} "
+            f"(promoters {iv['promoters']}%, detractors {iv['detractors']}%). Changed mind since first impression: more positive {iv['changedMind']['positive']}%, "
+            f"more negative {iv['changedMind']['negative']}%. Versus what they use or know: better {iv['vsAlternatives']['better']}%, same {iv['vsAlternatives']['same']}%, "
+            f"worse {iv['vsAlternatives']['worse']}%, know none {iv['vsAlternatives']['unknown']}%. Alternatives they'd choose instead: {alts}.\n"
+            f"What they concluded (clustered):\n{themes}\nWhat would win the non-buyers over: {fixes}")
+
+
+def compute_stats(agents: list[dict], verdicts: dict[int, dict], final: dict[int, float], mind_changes: int, posts: list[dict], interviews: dict[int, dict] | None = None) -> dict:
     n = len(agents)
+    interviews = interviews or {}
     fs = np.array([final.get(a["id"], verdicts.get(a["id"], {}).get("score", 5.0)) for a in agents], dtype=float)
     init = np.array([verdicts.get(a["id"], {}).get("score", 5.0) for a in agents], dtype=float)
     mean, sd = float(fs.mean()), float(fs.std())
-    buy = int((fs >= 6.5).sum()); no = int((fs < 4).sum())
-    intent = {"buy": round(buy / n * 100), "maybe": round((n - buy - no) / n * 100), "no": round(no / n * 100)}
+    # Intent is what people said, not a score cut-off: in live runs at most ~1% said they'd buy while scores >= 6.5 implied 11-17%.
+    stated, intent_source = _stated_intents(agents, verdicts, final, interviews)
+    buy, no = stated.count("Would buy/use"), stated.count("Would not")
+    intent = {"buy": _pct(buy, n), "maybe": _pct(n - buy - no, n), "no": _pct(no, n)}
+    buys = {a["id"]: x == "Would buy/use" for a, x in zip(agents, stated)}
 
     def seg(group: str, key):
-        m: dict[str, list[float]] = defaultdict(list)
+        m: dict[str, list[tuple[float, bool]]] = defaultdict(list)
         for a, s in zip(agents, fs):
-            m[str(key(a))].append(float(s))
-        return [{"segment": k, "group": group, "score": round(float(np.mean(v)), 1), "n": len(v), "intent": round(sum(1 for s in v if s >= 6.5) / len(v) * 100)} for k, v in m.items()]
+            m[str(key(a))].append((float(s), buys[a["id"]]))
+        return [{"segment": k, "group": group, "score": round(float(np.mean([s for s, _ in v])), 1), "n": len(v), "intent": _pct(sum(b for _, b in v), len(v))} for k, v in m.items()]
     segments = []
     for group, key in [("Profession", lambda a: a["professionGroup"]), ("Ideology", lambda a: a["ideology"]), ("Income", lambda a: a["income"]), ("Age", lambda a: a["ageBand"]),
                        ("Tech adoption", lambda a: a["tech"]), ("Role", lambda a: a["role"]), ("Country GDP tier", lambda a: a["extra"]["gdpTier"]), ("Trust posture", lambda a: a["extra"]["trust"]),
@@ -128,7 +204,8 @@ def compute_stats(agents: list[dict], verdicts: dict[int, dict], final: dict[int
 
     agreement = round(max(0.0, 1 - sd / 3.2) * 100)
     return {
-        "n": n, "mean": mean, "sd": sd, "intent": intent, "shift": float(fs.mean() - init.mean()), "mind_changes": mind_changes,
+        "n": n, "mean": mean, "sd": sd, "intent": intent, "intent_source": intent_source, "interviews": _interview_stats(agents, interviews),
+        "shift": float(fs.mean() - init.mean()), "mind_changes": mind_changes,
         "segments": segments, "objections": objections, "missing": missing, "top_objection": objections[0]["text"] if objections else "none",
         "best_segment": best, "worst_segment": worst, "agreement": agreement,
         "diversity": {"reactionSimilarityMedian": round(sim_median, 3), "distinctObjections": distinct_obj, "segmentSpread": round(best[1] - worst[1], 2),
@@ -168,11 +245,11 @@ async def run_judge(stimulus: dict, stats: dict, experts: list[dict], compositio
     obj = "\n".join(f"  {o['count']}x (influence {o['influence']:.1f}): {o['text']} — e.g. {o['quotes'][0]['agent'] if o['quotes'] else ''}" for o in stats["objections"])
     exp = "\n".join(f"  [{e['name']}] {e['headline']}\n" + "\n".join(f"     - ({f['type']}) {f['title']}: {f['detail']}" for f in e.get("findings", [])) for e in experts)
     posts = "\n".join(f"  - {p['author']} ({p['profession']}): \"{p['text']}\" [{p['replies']} replies/{p['reposts']} reposts/{p.get('likes', 0)} likes]" for p in stats["top_posts"][:12])
-    user = (f"DIMENSIONS TO SCORE: {dims}\n\nCROWD RESULTS (n={stats['n']}): mean {stats['mean']:.2f}, sd {stats['sd']:.2f}, intent buy/maybe/no {stats['intent']['buy']}/{stats['intent']['maybe']}/{stats['intent']['no']}%, "
+    user = (f"DIMENSIONS TO SCORE: {dims}\n\nCROWD RESULTS (n={stats['n']}): mean {stats['mean']:.2f}, sd {stats['sd']:.2f}, intent buy/maybe/no {stats['intent']['buy']}/{stats['intent']['maybe']}/{stats['intent']['no']}% (stated, from {stats['intent_source']}), "
             f"shift during discussion {stats['shift']:+.2f}, mind changes {stats['mind_changes']}, agreement {stats['agreement']}%.\n"
             f"Diversity check: median reaction similarity {stats['diversity']['reactionSimilarityMedian']}, distinct objections {stats['diversity']['distinctObjections']}, segment spread {stats['diversity']['segmentSpread']} ({stats['diversity']['verdict']}).\n"
             f"SEGMENTS:\n{seg}\nOBJECTIONS (clustered):\n{obj}\nMISSING (most cited): {', '.join(stats['missing'])}\nMOST DISCUSSED POSTS:\n{posts}\n\nRESEARCH TEAM FINDINGS:\n{exp}\n\n"
-            f"SAMPLE COMPOSITION: {composition}\n\n{market_summary(market)}\n\nWrite the report fields. JSON only.")
+            f"SAMPLE COMPOSITION: {composition}\n\n{market_summary(market)}\n\n{interview_summary(stats)}\n\nWrite the report fields. JSON only.")
     rng = random.Random(state["seed"] + 99)
     try:
         out = await L.json(role="analyst", system=system, user=user, schema=JUDGE_SCHEMA, meter=meter, fake=lambda: fake_judge(stats, stype, rng, market), max_tokens=8000, effort="medium")
@@ -211,7 +288,7 @@ async def run_judge(stimulus: dict, stats: dict, experts: list[dict], compositio
         "missingKpis": kpis[:8], "variants": [{"label": v["label"], "change": v["change"], "predictedDelta": round(float(v["predicted_delta"]), 1)} for v in out["variants"]],
         "polarization": round(stats["sd"], 2), "shift": round(stats["shift"], 2),
         "confidence": {"sample": n, "agreement": stats["agreement"], "label": label, "note": out["confidence_note"] + f" Diversity: {stats['diversity']['verdict']}."},
-        "intentSplit": stats["intent"],
+        "intentSplit": stats["intent"], "intentSource": stats["intent_source"], "interviews": stats["interviews"],
         "research": {
             "methodology": out["methodology_note"], "limitations": out["limitations"], "team": experts, "otherFindings": others[:12],
             "composition": composition, "diversity": stats["diversity"], "topPosts": stats["top_posts"][:10], "mindChanges": stats["mind_changes"],

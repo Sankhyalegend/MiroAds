@@ -5,13 +5,14 @@ import { useStore } from '../store'
 import NetworkCanvas, { type EdgeMode } from '../components/NetworkCanvas'
 import AgentPanel from '../components/AgentPanel'
 import AgentApp from '../components/AgentApp'
-import { GROUP_COLORS, hexToCss } from '../mock/personas'
+import { GROUP_COLORS, INTENT_COLOR, hexToCss } from '../mock/personas'
 import type { Stage } from '../types'
 
 const STAGES: { id: Stage; label: string }[] = [
   { id: 'market', label: 'Market scan' },
   { id: 'impressions', label: 'First impressions' },
   { id: 'social', label: 'Social rounds' },
+  { id: 'interviews', label: 'Exit interviews' },
   { id: 'experts', label: 'Research team' },
   { id: 'judge', label: 'Report' },
   { id: 'done', label: 'Scorecard' },
@@ -126,7 +127,9 @@ export default function Run() {
 
       <div className="flex flex-col gap-3 min-h-0 min-w-0 max-lg:hidden">
         <div className="card p-4 grid grid-cols-3 gap-3 text-center">
-          <Stat icon={<Eye size={14} />} label="Reacted" value={counters.impressions} />
+          {counters.interviews > 0
+            ? <Stat icon={<Eye size={14} />} label="Reacted · interviewed" value={`${counters.impressions.toLocaleString()} · ${counters.interviews.toLocaleString()}`} />
+            : <Stat icon={<Eye size={14} />} label="Reacted" value={counters.impressions} />}
           <Stat icon={<MessageSquare size={14} />} label="Posts + replies" value={counters.posts + counters.replies} />
           <Stat icon={<Repeat2 size={14} />} label="Reposts · likes" value={`${counters.reposts.toLocaleString()} · ${counters.likes.toLocaleString()}`} />
           <Stat icon={<Sparkles size={14} />} label="Mind changes" value={counters.mindChanges} />
@@ -161,6 +164,7 @@ export default function Run() {
                           {f.kind === 'reply' && to && <span>→ {to.name.split(' ')[0]}</span>}
                           {f.kind === 'repost' && to && <span>↻ {to.name.split(' ')[0]}</span>}
                           {f.kind === 'mind_change' && <span className="chip" style={{ borderColor: '#fff', color: '#fff' }}>mind change</span>}
+                          {f.kind === 'interview' && f.intent && <span className="chip" style={{ borderColor: INTENT_COLOR[f.intent], color: INTENT_COLOR[f.intent] }}>final: {f.intent.toLowerCase()}</span>}
                           {f.score != null && <span className="ml-auto font-semibold" style={{ color: c }}>{f.score.toFixed(1)}</span>}
                         </>
                       )}

@@ -1,20 +1,23 @@
 import { useEffect, useState } from 'react'
 import { X } from 'lucide-react'
 import { api } from '../api'
-import { live } from '../store'
+import { live, useStore } from '../store'
 import type { AgentDetail, Persona } from '../types'
-import { GROUP_COLORS, hexToCss } from '../mock/personas'
+import { GROUP_COLORS, INTENT_COLOR, hexToCss } from '../mock/personas'
 
 const col = (s: number) => s >= 6.5 ? '#3ddc97' : s >= 4 ? '#f5c242' : '#ff6b6b'
 
 export default function AgentPanel({ runId, persona, onClose }: { runId: string | null; persona: Persona; onClose: () => void }) {
   const [detail, setDetail] = useState<AgentDetail | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  // The detail is a snapshot; fetch again once this agent's exit interview arrives.
+  const interviewed = useStore(s => s.interviews[persona.id] != null)
+  const streamed = useStore(s => s.interviews[persona.id])
   useEffect(() => {
     setDetail(null); setErr(null)
     if (!runId) return
     api.getAgent(runId, persona.id).then(setDetail).catch(e => setErr(String(e.message)))
-  }, [runId, persona.id])
+  }, [runId, persona.id, interviewed])
 
   const score = live.scores[persona.id]
   const d = detail ?? (persona as AgentDetail)
@@ -85,6 +88,29 @@ export default function AgentPanel({ runId, persona, onClose }: { runId: string 
           </div>
         </div>
       )}
+
+      {d.interview ? (
+        <div className="bg-panel-2 rounded-lg p-3 space-y-1.5">
+          <div className="text-xs text-muted uppercase tracking-wide flex items-center gap-2">
+            Final take
+            <span className="chip normal-case" style={{ borderColor: INTENT_COLOR[d.interview.intent], color: INTENT_COLOR[d.interview.intent] }}>{d.interview.intent}</span>
+            <span className="normal-case">recommends {d.interview.recommend}/10</span>
+          </div>
+          <div>“{d.interview.quote}”</div>
+          <div className="text-xs text-muted">{d.interview.takeaway}</div>
+          <div className="text-xs"><span className="text-muted">Changed mind: </span>{d.interview.changedMind}{d.interview.changedMind !== 'No' && d.interview.whatChangedIt ? `, because of ${d.interview.whatChangedIt}` : ''}</div>
+          <div className="text-xs"><span className="text-muted">Versus what they know: </span>{d.interview.vsAlternatives}{d.interview.alternativeNamed && !/^(nothing|none)$/i.test(d.interview.alternativeNamed) ? ` (would compare with ${d.interview.alternativeNamed})` : ''}</div>
+          <div className="text-xs"><span className="text-muted">Would win them over: </span>{d.interview.oneFix}</div>
+        </div>
+      ) : streamed ? (
+        <div className="bg-panel-2 rounded-lg p-3 space-y-1">
+          <div className="text-xs text-muted uppercase tracking-wide flex items-center gap-2">
+            Final take <span className="chip normal-case" style={{ borderColor: INTENT_COLOR[streamed.intent], color: INTENT_COLOR[streamed.intent] }}>{streamed.intent}</span>
+            <span className="normal-case">recommends {streamed.recommend}/10</span>
+          </div>
+          <div>“{streamed.quote}”</div>
+        </div>
+      ) : null}
     </div>
   )
 }
