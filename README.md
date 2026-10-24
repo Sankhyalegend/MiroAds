@@ -43,7 +43,7 @@ Smoke test the API end to end: `powershell -File backend/scripts/smoke_run.ps1 -
 | 0 Brief | Normalize input; images get a vision description | analyst |
 | 0b Market scan | Web search (8 searches) for competitors, prices, news; a second call extracts them as JSON. Each agent gets the slice someone like them would know (by tech adoption and information diet; ~30% of buyers/users already own an alternative), and news can make them wary or excited | market (crowd model by default), analyst |
 | 1 First impressions | Every agent scores alone: score, intent, objection, missing, reasoning | crowd |
-| 2 Social app | Each round a slice of the crowd reads a ranked feed and posts / replies / reposts / likes / does nothing; everyone opens the app at least once; score changes must cite a post | crowd |
+| 2 Social app | Each round a slice of the crowd reads a ranked feed and posts / replies / reposts / likes / does nothing; everyone opens the app at least once. How often someone writes at all comes from their posting habit (activity and extraversion: lurkers write on ~10% of visits, occasional repliers ~35%, regular posters ~70%); other visits can only like, repost or scroll. Score changes must cite a post | crowd |
 | 2b Exit interviews | Everyone says what they concluded: intent, takeaway, mind change, vs alternatives, recommend 0-10, the one fix | crowd |
 | 3 Research team | 10 expert lenses (incl. a competitive analyst) audit the numbers: missing KPIs, risks, caveats | analyst |
 | 4 Report | Stats computed in code (intent from what agents said, NPS, themes); the model writes verdict, market position, variants, limitations | analyst |

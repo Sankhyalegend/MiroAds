@@ -4,6 +4,7 @@ rounds. Emits the same events the frontend mock emits."""
 from __future__ import annotations
 
 import asyncio
+import copy
 import math
 import random
 from dataclasses import dataclass, field
@@ -29,6 +30,10 @@ ACTION_SCHEMA = {
     "required": ["action", "target_post_id", "text", "new_score", "moved_by_post_id", "why"],
     "additionalProperties": False,
 }
+# A visit on which this person is only scrolling: they can like, repost or move on, but not write.
+READ_SCHEMA = copy.deepcopy(ACTION_SCHEMA)
+READ_SCHEMA["properties"]["action"] = {"type": "string", "enum": ["nothing", "like", "repost"], "description": "What you do on this visit: move on, like a post, or repost it."}
+READ_SCHEMA["properties"]["text"] = {"type": "string", "description": "Always empty on this visit."}
 
 SYSTEM_TEMPLATE = """You are role-playing one specific real person opening a social app where people are discussing a new thing. Stay fully in character and behave the way people really use these apps: most visits end with reading and moving on, or a like. A typical thread gets many likes for every reply, and most readers never write anything. Write only when you have something specific the feed doesn't already have (your own experience, a new angle, a joke, a direct question to someone), or when a post hits a nerve hard enough that you can't resist. Agreeing is a like; agreeing so strongly that you want your own followers to see it is a repost; "same here", "this!" or restating a point already made is never worth a reply. Your posting habit, given with your profile, says how often someone like you writes at all. When you do write, write like a real person on social media: short, in your own voice, sometimes emotional, funny, tangential or blunt. Disagreement is normal; so is enthusiasm.
 How opinions actually move: most people finish a thread with the opinion they started with. When someone does change their mind, it is because one specific post gave them a reason they had not considered, and that can push them up (a use case they hadn't pictured, a good experience someone had, a rebuttal of a worry) just as easily as down (a flaw they missed). Seeing the same complaint or the same unanswered question again is not new information and does not make the thing worse than it already seemed to you. Nobody in this feed speaks for the company, so unanswered questions are expected. If the thread has been noise, you can drift back toward your own first impression.
@@ -82,21 +87,29 @@ def rank_feed(agent: dict, posts: list[Post], agents_by_id: dict[int, dict], k: 
     return [p for p in ranked if p.agent_id != agent["id"]][:k]
 
 
-def _habit(agent: dict) -> float:
-    return 0.6 * agent["activity"] + 0.4 * agent["traits"]["extraversion"]
+def _habit(agent: dict) -> int:
+    """0 lurker, 1 occasional replier, 2 regular poster, from activity and extraversion."""
+    h = 0.6 * agent["activity"] + 0.4 * agent["traits"]["extraversion"]
+    return 0 if h < 0.45 else 1 if h < 0.7 else 2
+
+
+_HABITS = ("you almost never post or reply online; you read, and now and then you like something.",
+           "you reply now and then when something really gets to you, but mostly you read and like.",
+           "you post and reply a lot; if you have a take, you share it.")
+# Share of visits on which each habit gets to write at all. Asked per call, the model can't keep track of how often
+# someone like this writes: in a live run it replied on 97% of visits even when told it rarely posts.
+WRITE_CHANCE = (0.1, 0.35, 0.7)
 
 
 def posting_habit(agent: dict) -> str:
-    """How often this person writes at all, from activity and extraversion: lurkers, occasional repliers, regular posters."""
-    h = _habit(agent)
-    if h < 0.45:
-        return "you almost never post or reply online; you read, and now and then you like something."
-    if h < 0.7:
-        return "you reply now and then when something really gets to you, but mostly you read and like."
-    return "you post and reply a lot; if you have a take, you share it."
+    return _HABITS[_habit(agent)]
 
 
-def fake_action(agent: dict, feed: list[Post], my_score: float, rng: random.Random) -> dict:
+def write_chance(agent: dict) -> float:
+    return WRITE_CHANCE[_habit(agent)]
+
+
+def fake_action(agent: dict, feed: list[Post], my_score: float, rng: random.Random, may_write: bool = True) -> dict:
     roll = rng.random()
     ex = agent["extra"]
     pull = 0.0
@@ -105,7 +118,7 @@ def fake_action(agent: dict, feed: list[Post], my_score: float, rng: random.Rand
         for p in feed[:4]:
             pull += (p.score - my_score) * 0.08 * (0.5 + agent["traits"]["agreeableness"]) * (1 - agent["traits"]["conscientiousness"] * 0.3)
     new_score = round(max(0, min(10, my_score + pull + (rng.random() - 0.5) * 0.3)), 1)
-    writes = 0.08 + 0.35 * _habit(agent)  # chance this visit produces a reply or post
+    writes = 0.75 if may_write else 0.0  # chance this visit produces a reply or post
     if feed and roll < writes * 0.75:
         t = feed[0] if rng.random() < 0.6 else rng.choice(feed)
         agree = abs(t.score - my_score) < 2.5
@@ -181,18 +194,23 @@ async def run_social(run_id: str, stimulus: dict, agents: list[dict], verdicts: 
                 + (f" (reply to post {p.reply_to})" if p.reply_to else "") + (f" · {p.replies} replies, {p.reposts} reposts, {p.likes} likes" if p.replies or p.reposts or p.likes else "")
                 for p in feed) or "(feed is empty)"
             first = v.get("score", my)
+            # Whether this visit can include writing comes from the person's habit (a dice roll here, on its own random
+            # stream so the visits drawn each round don't change). On other visits they can only like, repost or move on.
+            may_write = random.Random(f"{state['seed']}:{r}:{agent['id']}").random() < write_chance(agent)
+            scrolling = "" if may_write else "This visit you're only scrolling: you won't write anything, but you can like or repost a post, or just move on.\n"
             user = (f"{persona_card(agent['_sk'], agent['_profile'], agent['mood'], agent.get('_mood_reason', ''))}{market_block(agent)}\n"
                     f"Your posting habit: {posting_habit(agent)}\n\n"
                     f"Your first impression, before any discussion: {first:.1f}/10. You said: \"{v.get('reaction', '')}\"\n"
                     f"Your score right now: {my:.1f}/10.\n\n"
-                    f"Round {r} of the discussion. Your feed right now:\n{feed_txt}\n\nDecide what you do (or don't). JSON only.")
+                    f"Round {r} of the discussion. Your feed right now:\n{feed_txt}\n\n{scrolling}Decide what you do (or don't). JSON only.")
             local = random.Random(rng.random())
+            fake = lambda: _fake_with_cause(fake_action(agent, feed, my, local, may_write), feed, my)
             try:
-                out = await L.json(role="crowd", system=system, user=user, schema=ACTION_SCHEMA, meter=meter, fake=lambda: _fake_with_cause(fake_action(agent, feed, my, local), feed, my), max_tokens=500)
+                out = await L.json(role="crowd", system=system, user=user, schema=ACTION_SCHEMA if may_write else READ_SCHEMA, meter=meter, fake=fake, max_tokens=500)
             except Exception as e:
                 if type(e).__name__ == "BudgetExceeded":
                     state["stopped"] = True; state["stop_reason"] = str(e); return
-                out = _fake_with_cause(fake_action(agent, feed, my, local), feed, my)
+                out = fake()
             # exposures: everything in the feed was seen
             for p in feed:
                 p.exposures += 1
