@@ -5,8 +5,9 @@ from __future__ import annotations
 import random
 import re
 from collections import defaultdict
+from functools import lru_cache
 
-from .frame import INCOME, IDEOLOGY, MOODS, PROFESSION_GROUPS, to_frontend_persona
+from .frame import COUNTRIES, INCOME, IDEOLOGY, MOODS, PROFESSION_GROUPS, to_frontend_persona
 
 AUDIENCE_KEYWORDS = {
     "developer": ("Engineering",), "engineer": ("Engineering",), "software": ("Engineering",), "designer": ("Design",),
@@ -15,6 +16,40 @@ AUDIENCE_KEYWORDS = {
     "finance": ("Finance",), "procurement": ("Finance",), "retail": ("Retail & Service",), "small business": ("Executives", "Retail & Service"),
     "operations": ("Operations",), "productivity": ("Executives", "Marketing", "Engineering"),
 }
+
+# Words in an audience description that point at countries. Matched as whole words; the short codes only in
+# capitals, so "people like us" or "business" never target a country.
+_CODES = {"US": ("United States",), "U.S.": ("United States",), "USA": ("United States",), "UK": ("United Kingdom",),
+          "EU": ("Germany", "Poland"), "UAE": ("UAE",)}
+_ALIASES = {
+    "america": ("United States",), "american": ("United States",), "americans": ("United States",),
+    "britain": ("United Kingdom",), "british": ("United Kingdom",), "england": ("United Kingdom",),
+    "europe": ("United Kingdom", "Germany", "Poland"), "european": ("United Kingdom", "Germany", "Poland"), "europeans": ("United Kingdom", "Germany", "Poland"),
+    "indian": ("India",), "indians": ("India",), "german": ("Germany",), "germans": ("Germany",), "brazilian": ("Brazil",), "brazilians": ("Brazil",),
+    "nigerian": ("Nigeria",), "nigerians": ("Nigeria",), "japanese": ("Japan",), "korean": ("South Korea",), "koreans": ("South Korea",),
+    "korea": ("South Korea",), "chinese": ("China",), "mexican": ("Mexico",), "mexicans": ("Mexico",), "canadian": ("Canada",), "canadians": ("Canada",),
+    "australian": ("Australia",), "australians": ("Australia",), "singaporean": ("Singapore",), "singaporeans": ("Singapore",),
+    "filipino": ("Philippines",), "filipinos": ("Philippines",), "vietnamese": ("Vietnam",), "indonesian": ("Indonesia",), "indonesians": ("Indonesia",),
+    "turkish": ("Turkey",), "egyptian": ("Egypt",), "egyptians": ("Egypt",), "kenyan": ("Kenya",), "kenyans": ("Kenya",), "pakistani": ("Pakistan",),
+    "pakistanis": ("Pakistan",), "bangladeshi": ("Bangladesh",), "polish": ("Poland",), "emirati": ("UAE",), "dubai": ("UAE",),
+    "latin america": ("Brazil", "Mexico"), "latam": ("Brazil", "Mexico"), "africa": ("South Africa", "Nigeria", "Kenya", "Egypt"),
+    "african": ("South Africa", "Nigeria", "Kenya", "Egypt"), "southeast asia": ("Singapore", "Indonesia", "Philippines", "Vietnam"),
+    "south asia": ("India", "Pakistan", "Bangladesh"), "middle east": ("UAE", "Egypt", "Turkey"),
+} | {c.lower(): (c,) for c, *_ in COUNTRIES}
+
+
+@lru_cache(maxsize=64)
+def audience_countries(audience: str) -> frozenset[str]:
+    """Countries an audience description names, e.g. 'US students' -> {'United States'}."""
+    found: set[str] = set()
+    for code, cs in _CODES.items():
+        if re.search(rf"(?<![A-Za-z]){re.escape(code)}(?![A-Za-z])", audience):
+            found.update(cs)
+    low = audience.lower()
+    for word, cs in _ALIASES.items():
+        if re.search(rf"\b{re.escape(word)}\b", low):
+            found.update(cs)
+    return frozenset(found)
 
 
 def _audience_weight(sk: dict, audience: str) -> float:
@@ -33,9 +68,8 @@ def _audience_weight(sk: dict, audience: str) -> float:
         w *= 2.0 if sk["economic"] == "Frugal" else 1.0
     if "premium" in a or "luxury" in a or "enterprise" in a:
         w *= 2.0 if sk["economic"] == "Premium" else 1.0
-    for c in ("india", "us", "uk", "germany", "brazil", "nigeria", "japan", "europe"):
-        if c in a and c in sk["country"].lower():
-            w *= 2.5
+    if sk["country"] in audience_countries(audience):
+        w *= 2.5
     return w
 
 
