@@ -18,7 +18,23 @@ export interface FeedItem {
   t: number
 }
 
-interface Counters { impressions: number; posts: number; replies: number; reposts: number; mindChanges: number; exposures: number }
+/** A post in the agent app, keyed by the backend post id. Replies are posts with `replyTo`. */
+export interface AppPost {
+  id: number
+  agentId: number
+  text: string
+  score: number
+  round: number
+  t: number
+  replyTo?: number
+  replyIds: number[]
+  reposts: number
+  likes: number
+  /** Mind changes attributed to this post. */
+  mindsChanged: number
+}
+
+interface Counters { impressions: number; posts: number; replies: number; reposts: number; likes: number; mindChanges: number; exposures: number }
 
 interface State {
   engine: Engine
@@ -34,6 +50,9 @@ interface State {
   totalRounds: number
   counters: Counters
   feed: FeedItem[]
+  posts: Record<number, AppPost>
+  /** Post ids in arrival order. */
+  postOrder: number[]
   expertFindings: { name: string; role: string; finding: string }[]
   scorecard: Scorecard | null
   running: boolean
@@ -58,7 +77,7 @@ let closeWs: (() => void) | null = null
 let feedId = 0
 export const live = { scores: new Float32Array(0), sum: 0, n: 0 }
 
-const EMPTY: Counters = { impressions: 0, posts: 0, replies: 0, reposts: 0, mindChanges: 0, exposures: 0 }
+const EMPTY: Counters = { impressions: 0, posts: 0, replies: 0, reposts: 0, likes: 0, mindChanges: 0, exposures: 0 }
 
 export const useStore = create<State>((set, get) => {
   // ---- shared ingestion: both the mock engine and the WebSocket feed events through here ----
@@ -70,6 +89,14 @@ export const useStore = create<State>((set, get) => {
     const counters = { ...s.counters }
     const feed = [...s.feed]
     const expertFindings = [...s.expertFindings]
+    // Posts are copied on first write in this batch, and only the posts that change get new objects,
+    // so memoised post cards in the app view skip re-rendering.
+    let posts = s.posts, postOrder = s.postOrder, postsDirty = false
+    const touchPosts = () => { if (!postsDirty) { posts = { ...posts }; postOrder = [...postOrder]; postsDirty = true } }
+    const bump = (id: number | null | undefined, field: 'reposts' | 'likes' | 'mindsChanged') => {
+      if (id == null || !posts[id]) return
+      touchPosts(); posts[id] = { ...posts[id], [field]: posts[id][field] + 1 }
+    }
     let stage = s.stage, round = s.round, totalRounds = s.totalRounds, costUsd = s.costUsd, error = s.error, running = s.running
     for (const e of evs) {
       switch (e.kind) {
@@ -82,17 +109,23 @@ export const useStore = create<State>((set, get) => {
           break
         case 'post':
           counters.posts++
+          touchPosts(); posts[e.id] = { id: e.id, agentId: e.agentId, text: e.text, score: e.score, round: e.round, t: e.t, replyIds: [], reposts: 0, likes: 0, mindsChanged: 0 }; postOrder.push(e.id)
           feed.push({ id: ++feedId, kind: 'post', agentId: e.agentId, text: e.text, score: e.score, round: e.round, t: e.t }); break
         case 'reply':
           counters.replies++
+          touchPosts(); posts[e.id] = { id: e.id, agentId: e.agentId, text: e.text, score: e.score, round: e.round, t: e.t, replyTo: e.toPostId, replyIds: [], reposts: 0, likes: 0, mindsChanged: 0 }; postOrder.push(e.id)
+          if (posts[e.toPostId]) posts[e.toPostId] = { ...posts[e.toPostId], replyIds: [...posts[e.toPostId].replyIds, e.id] }
           feed.push({ id: ++feedId, kind: 'reply', agentId: e.agentId, toAgentId: e.toAgentId, text: e.text, score: e.score, round: e.round, t: e.t }); break
         case 'repost':
           counters.reposts++
+          bump(e.postId, 'reposts')
           feed.push({ id: ++feedId, kind: 'repost', agentId: e.agentId, toAgentId: e.fromAgentId, text: 'reposted', round: e.round, t: e.t }); break
+        case 'like': counters.likes++; bump(e.postId, 'likes'); break
         case 'exposure': counters.exposures++; break
         case 'mind_change':
           counters.mindChanges++
           live.sum += e.to - e.from; live.scores[e.agentId] = e.to
+          bump(e.postId, 'mindsChanged')
           feed.push({ id: ++feedId, kind: 'mind_change', agentId: e.agentId, toAgentId: e.causedBy, text: `changed their mind ${e.from.toFixed(1)} → ${e.to.toFixed(1)}`, score: e.to, round: e.round, t: e.t }); break
         case 'expert':
           expertFindings.push({ name: e.name, role: e.role, finding: e.finding })
@@ -110,7 +143,7 @@ export const useStore = create<State>((set, get) => {
           break
       }
     }
-    set({ counters, feed: feed.slice(-250), expertFindings, stage, round, totalRounds, costUsd, error, running, liveMean: live.n ? live.sum / live.n : 0 })
+    set({ counters, feed: feed.slice(-250), posts, postOrder, expertFindings, stage, round, totalRounds, costUsd, error, running, liveMean: live.n ? live.sum / live.n : 0 })
   }
 
   const flush = () => { flushTimer = null; const evs = pending; pending = []; applyEvents(evs) }
@@ -124,7 +157,7 @@ export const useStore = create<State>((set, get) => {
     live.scores = new Float32Array(personas.length).fill(-1)
     live.sum = 0; live.n = 0
     pending = []
-    set({ personas, stage: 'impressions', round: 0, totalRounds: rounds, running: true, counters: { ...EMPTY }, feed: [], expertFindings: [], scorecard: null, liveMean: 0, costUsd: 0, error: null })
+    set({ personas, stage: 'impressions', round: 0, totalRounds: rounds, running: true, counters: { ...EMPTY }, feed: [], posts: {}, postOrder: [], expertFindings: [], scorecard: null, liveMean: 0, costUsd: 0, error: null })
   }
 
   const attachWs = (runId: string, fromSeq: number) => {
@@ -149,6 +182,8 @@ export const useStore = create<State>((set, get) => {
     totalRounds: 0,
     counters: { ...EMPTY },
     feed: [],
+    posts: {},
+    postOrder: [],
     expertFindings: [],
     scorecard: null,
     running: false,
@@ -211,6 +246,6 @@ export const useStore = create<State>((set, get) => {
       if (engine === 'live' && runId) api.stopRun(runId).catch(() => {})
       set({ running: false })
     },
-    reset: () => { stopper?.stop(); stopper = null; closeWs?.(); closeWs = null; set({ stage: 'idle', running: false, scorecard: null, feed: [], personas: [], runId: null, error: null }) },
+    reset: () => { stopper?.stop(); stopper = null; closeWs?.(); closeWs = null; set({ stage: 'idle', running: false, scorecard: null, feed: [], posts: {}, postOrder: [], personas: [], runId: null, error: null }) },
   }
 })

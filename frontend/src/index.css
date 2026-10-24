@@ -53,6 +53,7 @@ html, body, #root {
   outline: none; font: inherit;
 }
 .input:focus { border-color: var(--color-accent); }
+.input-sm { width: auto; padding: 4px 8px; font-size: 12px; border-radius: 8px; }
 
 .tab {
   padding: 8px 14px; border-radius: 999px; font-size: 14px; cursor: pointer;

@@ -236,19 +236,28 @@ export function runMockSimulation(opts: EngineOptions): { stop: () => void } {
   const socialStart = impressionMs + 600
   later(socialStart, () => onEvent({ kind: 'stage', stage: 'social', t: now() }))
   const byInfluence = [...personas].sort((a, b) => b.influence - a.influence)
+  const opened = new Set<number>()  // everyone opens the app at least once over the rounds
   for (let r = 1; r <= rounds; r++) {
     const roundStart = socialStart + (r - 1) * msPerRound
     later(roundStart, () => onEvent({ kind: 'round', round: r, totalRounds: rounds, t: now() }))
     const activeCount = Math.max(12, Math.round(personas.length * (0.11 + rng() * 0.06)))
+    const active: Persona[] = []
     for (let k = 0; k < activeCount; k++) {
       // Who acts: influence-weighted with a long tail of ordinary people.
-      const p = rng() < 0.35 ? byInfluence[Math.floor(rng() * Math.min(byInfluence.length, 60))] : personas[Math.floor(rng() * personas.length)]
+      active.push(rng() < 0.35 ? byInfluence[Math.floor(rng() * Math.min(byInfluence.length, 60))] : personas[Math.floor(rng() * personas.length)])
+    }
+    active.forEach(p => opened.add(p.id))
+    const waiting = personas.filter(p => !opened.has(p.id))
+    for (let i = waiting.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [waiting[i], waiting[j]] = [waiting[j], waiting[i]] }
+    const lurkers = waiting.slice(0, Math.ceil(waiting.length / (rounds - r + 1)))
+    lurkers.forEach(p => opened.add(p.id))
+    active.forEach((p, k) => {
       const at = roundStart + 150 + (k / activeCount) * (msPerRound - 400)
       later(at, () => {
         const v = verdicts.get(p.id); if (!v) return
         const s = scores.get(p.id) ?? v.score
         const roll = rng()
-        if (posts.length > 3 && roll < 0.55) {
+        if (posts.length > 3 && roll < 0.45) {
           // reply to an existing post, preferring recent + influential authors
           const pool = posts.slice(-Math.min(posts.length, 40))
           const target = pool[Math.floor(Math.pow(rng(), 0.6) * pool.length)]
@@ -261,12 +270,14 @@ export function runMockSimulation(opts: EngineOptions): { stop: () => void } {
           posts.push({ id, agentId: p.id, score: s, round: r })
           onEvent({ kind: 'reply', id, agentId: p.id, toAgentId: target.agentId, toPostId: target.id, text, score: s, round: r, t: now() })
           // persuasion: the target's author and a few readers drift toward the replier if they're influential
-          persuade(target.agentId, p, s, r)
-        } else if (posts.length > 0 && roll < 0.7) {
+          persuade(target.agentId, p, s, r, 1, id)
+        } else if (posts.length > 0 && roll < 0.55) {
           const target = posts[Math.floor(Math.pow(rng(), 0.4) * posts.length)]
           if (target.agentId === p.id) return
           onEvent({ kind: 'repost', agentId: p.id, fromAgentId: target.agentId, postId: target.id, round: r, t: now() })
-          persuade(p.id, personas[target.agentId], target.score, r)
+          persuade(p.id, personas[target.agentId], target.score, r, 1, target.id)
+        } else if (posts.length > 0 && roll < 0.72) {
+          like(p, s, r)
         } else {
           const id = ++postId
           posts.push({ id, agentId: p.id, score: s, round: r })
@@ -275,17 +286,32 @@ export function runMockSimulation(opts: EngineOptions): { stop: () => void } {
         }
         // ambient exposure: the feed shows this to a handful of readers, who drift slightly toward loud voices.
         const readers = 3 + Math.round(p.influence * 9)
+        const shownId = posts.length ? posts[posts.length - 1].id : undefined
         for (let j = 0; j < readers; j++) {
           const reader = personas[Math.floor(rng() * personas.length)]
           if (reader.id === p.id) continue
           onEvent({ kind: 'exposure', agentId: reader.id, fromAgentId: p.id, round: r, t: now() })
-          persuade(reader.id, p, s, r, 0.35)
+          persuade(reader.id, p, s, r, 0.35, shownId)
         }
       })
-    }
+    })
+    // People who hadn't opened the app yet mostly scroll and like.
+    lurkers.forEach((p, k) => {
+      later(roundStart + 200 + (k / Math.max(1, lurkers.length)) * (msPerRound - 400), () => {
+        const s = scores.get(p.id); if (s == null || !posts.length) return
+        if (rng() < 0.6) like(p, s, r)
+      })
+    })
   }
 
-  function persuade(targetId: number, by: Persona, towards: number, round: number, strength = 1) {
+  function like(p: Persona, s: number, round: number) {
+    const pool = posts.slice(-Math.min(posts.length, 60)).filter(x => x.agentId !== p.id && Math.abs(x.score - s) < 2.5)
+    if (!pool.length) return
+    const target = pool[Math.floor(rng() * pool.length)]
+    onEvent({ kind: 'like', agentId: p.id, fromAgentId: target.agentId, postId: target.id, round, t: now() })
+  }
+
+  function persuade(targetId: number, by: Persona, towards: number, round: number, strength = 1, postId?: number) {
     const cur = scores.get(targetId); if (cur == null) return
     const target = personas[targetId]
     // Loud voices move people; agreeable, less conscientious readers move more.
@@ -293,7 +319,7 @@ export function runMockSimulation(opts: EngineOptions): { stop: () => void } {
     const next = Math.round((cur + (towards - cur) * pull * 0.45) * 10) / 10
     if (Math.abs(next - cur) >= 0.5) {
       scores.set(targetId, next)
-      onEvent({ kind: 'mind_change', agentId: targetId, from: cur, to: next, causedBy: by.id, round, t: now() })
+      onEvent({ kind: 'mind_change', agentId: targetId, from: cur, to: next, causedBy: by.id, postId, round, t: now() })
     } else {
       scores.set(targetId, next)
     }

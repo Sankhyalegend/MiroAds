@@ -54,7 +54,7 @@ async def run_experts(run_id: str, stimulus: dict, stats: dict, top_posts: list[
     L = llm()
     system = SYSTEM_TEMPLATE.format(stimulus=stimulus_block(stimulus))
     rng = random.Random(state["seed"] * 3 + 1)
-    posts_txt = "\n".join(f"- {p['author']} ({p['profession']}, {p['region']}, score {p['score']:.1f}): \"{p['text']}\" [{p['replies']} replies, {p['reposts']} reposts]" for p in top_posts[:20])
+    posts_txt = "\n".join(f"- {p['author']} ({p['profession']}, {p['region']}, score {p['score']:.1f}): \"{p['text']}\" [{p['replies']} replies, {p['reposts']} reposts, {p.get('likes', 0)} likes]" for p in top_posts[:20])
     seg = "\n".join(f"  {s['group']}/{s['segment']}: {s['score']:.1f} (n={s['n']}, {s['intent']}% intent)" for s in stats["segments"][:28])
     obj = "\n".join(f"  {o['count']}x (influence {o['influence']:.1f}): {o['text']}" for o in stats["objections"][:8])
     data = (f"CROWD RESULTS (n={stats['n']}):\n- Mean score {stats['mean']:.2f}/10, std-dev {stats['sd']:.2f}; intent buy/maybe/no = {stats['intent']['buy']}/{stats['intent']['maybe']}/{stats['intent']['no']}%\n"

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Square, BarChart3, Palette, MessageSquare, Repeat2, Sparkles, Eye, Share2, DollarSign } from 'lucide-react'
+import { Square, BarChart3, Palette, MessageSquare, Repeat2, Sparkles, Eye, Share2, DollarSign, Network, Smartphone } from 'lucide-react'
 import { useStore } from '../store'
 import NetworkCanvas, { type EdgeMode } from '../components/NetworkCanvas'
 import AgentPanel from '../components/AgentPanel'
+import AgentApp from '../components/AgentApp'
 import { GROUP_COLORS, hexToCss } from '../mock/personas'
 import type { Stage } from '../types'
 
@@ -23,6 +24,7 @@ export default function Run() {
   const [edgeMode, setEdgeMode] = useState<EdgeMode>('all')
   const [net, setNet] = useState({ edges: 0, crossCluster: 0 })
   const [selected, setSelected] = useState<number | null>(null)
+  const [view, setView] = useState<'network' | 'app'>('network')
   const [loadErr, setLoadErr] = useState<string | null>(null)
   const feedRef = useRef<HTMLDivElement>(null)
 
@@ -58,15 +60,27 @@ export default function Run() {
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <div className="flex items-center rounded-lg border border-line overflow-hidden text-xs">
-              {(['all', 'recent', 'off'] as EdgeMode[]).map(m => (
-                <button key={m} onClick={() => setEdgeMode(m)} className={`px-2.5 py-1.5 capitalize ${edgeMode === m ? 'bg-panel-2 text-text' : 'text-muted hover:text-text'}`} title="How much of the conversation web to draw">
-                  {m === 'all' ? <span className="flex items-center gap-1"><Share2 size={12} /> Lines: all</span> : m}
-                </button>
-              ))}
+              <button onClick={() => setView('network')} className={`px-2.5 py-1.5 flex items-center gap-1 ${view === 'network' ? 'bg-panel-2 text-text' : 'text-muted hover:text-text'}`} title="Everyone as dots, conversations as lines">
+                <Network size={12} /> Network
+              </button>
+              <button onClick={() => setView('app')} className={`px-2.5 py-1.5 flex items-center gap-1 ${view === 'app' ? 'bg-panel-2 text-text' : 'text-muted hover:text-text'}`} title="Read the conversation in the app the agents use">
+                <Smartphone size={12} /> App
+              </button>
             </div>
-            <button className="btn btn-ghost text-xs whitespace-nowrap" onClick={() => setColorMode(m => m === 'sentiment' ? 'profession' : 'sentiment')}>
-              <Palette size={14} /> {colorMode === 'sentiment' ? 'Colour: sentiment' : 'Colour: profession'}
-            </button>
+            {view === 'network' && (
+              <>
+                <div className="flex items-center rounded-lg border border-line overflow-hidden text-xs">
+                  {(['all', 'recent', 'off'] as EdgeMode[]).map(m => (
+                    <button key={m} onClick={() => setEdgeMode(m)} className={`px-2.5 py-1.5 capitalize ${edgeMode === m ? 'bg-panel-2 text-text' : 'text-muted hover:text-text'}`} title="How much of the conversation web to draw">
+                      {m === 'all' ? <span className="flex items-center gap-1"><Share2 size={12} /> Lines: all</span> : m}
+                    </button>
+                  ))}
+                </div>
+                <button className="btn btn-ghost text-xs whitespace-nowrap" onClick={() => setColorMode(m => m === 'sentiment' ? 'profession' : 'sentiment')}>
+                  <Palette size={14} /> {colorMode === 'sentiment' ? 'Colour: sentiment' : 'Colour: profession'}
+                </button>
+              </>
+            )}
             {running ? (
               <button className="btn btn-ghost text-xs" onClick={stop}><Square size={14} /> Stop</button>
             ) : scorecard ? (
@@ -94,6 +108,8 @@ export default function Run() {
             )}
             <span className="text-muted">· lines = replies (coloured by stance), reposts (blue), mind changes (white) · dashes = reading · click a dot for its reasoning</span>
           </div>
+          {/* The app covers the canvas instead of replacing it: the canvas sizes itself to this card and keeps its state. */}
+          {view === 'app' && <div className="absolute inset-0 z-20 bg-panel rounded-xl overflow-hidden"><AgentApp onSelect={setSelected} /></div>}
         </div>
       </div>
 
@@ -101,7 +117,7 @@ export default function Run() {
         <div className="card p-4 grid grid-cols-3 gap-3 text-center">
           <Stat icon={<Eye size={14} />} label="Reacted" value={counters.impressions} />
           <Stat icon={<MessageSquare size={14} />} label="Posts + replies" value={counters.posts + counters.replies} />
-          <Stat icon={<Repeat2 size={14} />} label="Reposts" value={counters.reposts} />
+          <Stat icon={<Repeat2 size={14} />} label="Reposts · likes" value={`${counters.reposts.toLocaleString()} · ${counters.likes.toLocaleString()}`} />
           <Stat icon={<Sparkles size={14} />} label="Mind changes" value={counters.mindChanges} />
           <Stat icon={<Share2 size={14} />} label="Connections" value={net.edges} />
           <Stat label="Cross-group" value={net.edges ? `${Math.round((net.crossCluster / net.edges) * 100)}%` : '–'} />

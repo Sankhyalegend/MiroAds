@@ -187,7 +187,7 @@ export default function Scorecard() {
             <div>
               <div className="text-xs text-muted uppercase tracking-wide mb-2">Most discussed posts</div>
               <div className="space-y-1.5">
-                {R.topPosts.slice(0, 6).map(p => <div key={p.id} className="text-xs bg-panel-2 rounded-md px-3 py-2"><span className="font-semibold">{p.author}</span> <span className="text-muted">· {p.profession}, {p.region} · r{p.round} · {p.replies} replies, {p.reposts} reposts</span><div className="mt-0.5">“{p.text}”</div></div>)}
+                {R.topPosts.slice(0, 6).map(p => <div key={p.id} className="text-xs bg-panel-2 rounded-md px-3 py-2"><span className="font-semibold">{p.author}</span> <span className="text-muted">· {p.profession}, {p.region} · r{p.round} · {p.replies} replies, {p.reposts} reposts{p.likes != null ? `, ${p.likes} likes` : ''}</span><div className="mt-0.5">“{p.text}”</div></div>)}
               </div>
             </div>
           )}

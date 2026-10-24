@@ -119,10 +119,10 @@ def compute_stats(agents: list[dict], verdicts: dict[int, dict], final: dict[int
             sim_median = 0.0
     distinct_obj = len({re.sub(r"\W+", " ", (verdicts[a["id"]].get("objection", "") or "")).strip().lower() for a in agents if a["id"] in verdicts})
 
-    top_posts = sorted(posts, key=lambda p: -(p.get("replies", 0) * 2 + p.get("reposts", 0) * 1.5 + p.get("exposures", 0) * 0.05))[:20]
+    top_posts = sorted(posts, key=lambda p: -(p.get("replies", 0) * 2 + p.get("reposts", 0) * 1.5 + p.get("likes", 0) * 0.5 + p.get("exposures", 0) * 0.05))[:20]
     agents_by_id = {a["id"]: a for a in agents}
     top_posts_out = [{"id": p["id"], "author": agents_by_id[p["agent_id"]]["name"], "profession": agents_by_id[p["agent_id"]]["profession"], "region": agents_by_id[p["agent_id"]]["region"],
-                      "score": p["score"], "text": p["text"], "replies": p.get("replies", 0), "reposts": p.get("reposts", 0), "round": p["round"]} for p in top_posts]
+                      "score": p["score"], "text": p["text"], "replies": p.get("replies", 0), "reposts": p.get("reposts", 0), "likes": p.get("likes", 0), "round": p["round"]} for p in top_posts]
 
     agreement = round(max(0.0, 1 - sd / 3.2) * 100)
     return {
@@ -162,7 +162,7 @@ async def run_judge(stimulus: dict, stats: dict, experts: list[dict], compositio
     seg = "\n".join(f"  {s['group']}/{s['segment']}: {s['score']:.1f} (n={s['n']}, {s['intent']}% intent)" for s in stats["segments"][:40])
     obj = "\n".join(f"  {o['count']}x (influence {o['influence']:.1f}): {o['text']} — e.g. {o['quotes'][0]['agent'] if o['quotes'] else ''}" for o in stats["objections"])
     exp = "\n".join(f"  [{e['name']}] {e['headline']}\n" + "\n".join(f"     - ({f['type']}) {f['title']}: {f['detail']}" for f in e.get("findings", [])) for e in experts)
-    posts = "\n".join(f"  - {p['author']} ({p['profession']}): \"{p['text']}\" [{p['replies']}r/{p['reposts']}rp]" for p in stats["top_posts"][:12])
+    posts = "\n".join(f"  - {p['author']} ({p['profession']}): \"{p['text']}\" [{p['replies']} replies/{p['reposts']} reposts/{p.get('likes', 0)} likes]" for p in stats["top_posts"][:12])
     user = (f"DIMENSIONS TO SCORE: {dims}\n\nCROWD RESULTS (n={stats['n']}): mean {stats['mean']:.2f}, sd {stats['sd']:.2f}, intent buy/maybe/no {stats['intent']['buy']}/{stats['intent']['maybe']}/{stats['intent']['no']}%, "
             f"shift during discussion {stats['shift']:+.2f}, mind changes {stats['mind_changes']}, agreement {stats['agreement']}%.\n"
             f"Diversity check: median reaction similarity {stats['diversity']['reactionSimilarityMedian']}, distinct objections {stats['diversity']['distinctObjections']}, segment spread {stats['diversity']['segmentSpread']} ({stats['diversity']['verdict']}).\n"

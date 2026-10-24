@@ -64,9 +64,11 @@ export type SimEvent =
   | { kind: 'post'; id: number; agentId: number; text: string; score: number; round: number; t: number }
   | { kind: 'reply'; id: number; agentId: number; toAgentId: number; toPostId: number; text: string; score: number; round: number; t: number }
   | { kind: 'repost'; agentId: number; fromAgentId: number; postId: number; round: number; t: number }
+  | { kind: 'like'; agentId: number; fromAgentId: number; postId: number; round: number; t: number }
   /** An agent saw another agent's post in their feed (no action taken). */
   | { kind: 'exposure'; agentId: number; fromAgentId: number; round: number; t: number }
-  | { kind: 'mind_change'; agentId: number; from: number; to: number; causedBy: number; round: number; t: number }
+  /** `postId`: the post that moved them, when known. */
+  | { kind: 'mind_change'; agentId: number; from: number; to: number; causedBy: number; postId?: number | null; round: number; t: number }
   | { kind: 'round'; round: number; totalRounds: number; t: number }
   | { kind: 'expert'; name: string; role: string; finding: string; t: number }
   | { kind: 'crowd_ready'; n: number; t: number }
@@ -89,7 +91,7 @@ export interface Research {
   otherFindings: { type: string; title: string; detail: string; by: string }[]
   composition: Record<string, Record<string, number> | number>
   diversity: { reactionSimilarityMedian: number; distinctObjections: number; segmentSpread: number; verdict: string }
-  topPosts: { id: number; author: string; profession: string; region: string; score: number; text: string; replies: number; reposts: number; round: number }[]
+  topPosts: { id: number; author: string; profession: string; region: string; score: number; text: string; replies: number; reposts: number; likes?: number; round: number }[]
   mindChanges: number
   costUsd: number
   tokens?: Record<string, number>
