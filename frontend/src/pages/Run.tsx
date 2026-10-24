@@ -46,49 +46,52 @@ export default function Run() {
   return (
     <div className="h-[calc(100vh-56px)] grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] gap-4 p-4 fade-in">
       <div className="flex flex-col gap-3 min-h-0 min-w-0">
-        <div className="card px-4 py-3 flex items-center gap-4 min-w-0 overflow-hidden">
-          <div className="min-w-0 shrink">
-            <div className="text-xs text-muted uppercase tracking-wide">{stimulus.type} · {engine === 'live' ? 'live engine' : 'mock engine'}{runId ? ` · ${runId}` : ''}</div>
-            <div className="font-semibold truncate">{stimulus.title}</div>
+        <div className="card px-4 py-3 space-y-2.5 min-w-0 overflow-hidden">
+          <div className="flex items-center gap-4 min-w-0">
+            <div className="min-w-0 flex-1">
+              <div className="text-xs text-muted uppercase tracking-wide truncate">{stimulus.type} · {engine === 'live' ? 'live engine' : 'mock engine'}{runId ? ` · ${runId}` : ''}</div>
+              <div className="font-semibold truncate">{stimulus.title}</div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center rounded-lg border border-line overflow-hidden text-xs">
+                <button onClick={() => setView('network')} className={`px-2.5 py-1.5 flex items-center gap-1 ${view === 'network' ? 'bg-panel-2 text-text' : 'text-muted hover:text-text'}`} title="Everyone as dots, conversations as lines">
+                  <Network size={12} /> Network
+                </button>
+                <button onClick={() => setView('app')} className={`px-2.5 py-1.5 flex items-center gap-1 ${view === 'app' ? 'bg-panel-2 text-text' : 'text-muted hover:text-text'}`} title="Read the conversation in the app the agents use">
+                  <Smartphone size={12} /> App
+                </button>
+              </div>
+              {view === 'network' && (
+                <>
+                  <div className="flex items-center rounded-lg border border-line overflow-hidden text-xs">
+                    {(['all', 'recent', 'off'] as EdgeMode[]).map(m => (
+                      <button key={m} onClick={() => setEdgeMode(m)} className={`px-2.5 py-1.5 capitalize ${edgeMode === m ? 'bg-panel-2 text-text' : 'text-muted hover:text-text'}`} title="How much of the conversation web to draw">
+                        {m === 'all' ? <span className="flex items-center gap-1"><Share2 size={12} /> Lines: all</span> : m}
+                      </button>
+                    ))}
+                  </div>
+                  <button className="btn btn-ghost text-xs whitespace-nowrap" onClick={() => setColorMode(m => m === 'sentiment' ? 'profession' : 'sentiment')}>
+                    <Palette size={14} /> {colorMode === 'sentiment' ? 'Colour: sentiment' : 'Colour: profession'}
+                  </button>
+                </>
+              )}
+              {running ? (
+                <button className="btn btn-ghost text-xs" onClick={stop}><Square size={14} /> Stop</button>
+              ) : scorecard ? (
+                <button className="btn text-xs" onClick={() => nav(scorecardPath)}><BarChart3 size={14} /> View scorecard</button>
+              ) : null}
+            </div>
           </div>
-          <div className="flex-1 flex items-center gap-1 justify-center min-w-0 overflow-hidden">
+          {/* Stages get their own row: next to the view controls they were squeezed out of sight. */}
+          <div className="flex items-center gap-1 overflow-x-auto">
             {STAGES.map((s, i) => (
-              <div key={s.id} className="flex items-center gap-1">
+              <div key={s.id} className="flex items-center gap-1 shrink-0">
                 <div className={`px-3 py-1 rounded-full text-xs border whitespace-nowrap ${i < stageIdx ? 'border-pos text-pos' : i === stageIdx ? 'border-accent text-text bg-panel-2' : 'border-line text-muted'}`}>
                   {s.label}{s.id === 'social' && stage === 'social' && totalRounds ? ` ${round}/${totalRounds}` : ''}
                 </div>
                 {i < STAGES.length - 1 && <div className="w-4 h-px bg-line" />}
               </div>
             ))}
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <div className="flex items-center rounded-lg border border-line overflow-hidden text-xs">
-              <button onClick={() => setView('network')} className={`px-2.5 py-1.5 flex items-center gap-1 ${view === 'network' ? 'bg-panel-2 text-text' : 'text-muted hover:text-text'}`} title="Everyone as dots, conversations as lines">
-                <Network size={12} /> Network
-              </button>
-              <button onClick={() => setView('app')} className={`px-2.5 py-1.5 flex items-center gap-1 ${view === 'app' ? 'bg-panel-2 text-text' : 'text-muted hover:text-text'}`} title="Read the conversation in the app the agents use">
-                <Smartphone size={12} /> App
-              </button>
-            </div>
-            {view === 'network' && (
-              <>
-                <div className="flex items-center rounded-lg border border-line overflow-hidden text-xs">
-                  {(['all', 'recent', 'off'] as EdgeMode[]).map(m => (
-                    <button key={m} onClick={() => setEdgeMode(m)} className={`px-2.5 py-1.5 capitalize ${edgeMode === m ? 'bg-panel-2 text-text' : 'text-muted hover:text-text'}`} title="How much of the conversation web to draw">
-                      {m === 'all' ? <span className="flex items-center gap-1"><Share2 size={12} /> Lines: all</span> : m}
-                    </button>
-                  ))}
-                </div>
-                <button className="btn btn-ghost text-xs whitespace-nowrap" onClick={() => setColorMode(m => m === 'sentiment' ? 'profession' : 'sentiment')}>
-                  <Palette size={14} /> {colorMode === 'sentiment' ? 'Colour: sentiment' : 'Colour: profession'}
-                </button>
-              </>
-            )}
-            {running ? (
-              <button className="btn btn-ghost text-xs" onClick={stop}><Square size={14} /> Stop</button>
-            ) : scorecard ? (
-              <button className="btn text-xs" onClick={() => nav(scorecardPath)}><BarChart3 size={14} /> View scorecard</button>
-            ) : null}
           </div>
         </div>
 

@@ -54,11 +54,18 @@ export default function Upload() {
   const [audience, setAudience] = useState('Remote software developers 25-40, students, productivity enthusiasts; plus a general-public control sample')
   const [competitors, setCompetitors] = useState('')
   const [busy, setBusy] = useState(false)
+  const [confirming, setConfirming] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [libN, setLibN] = useState(2000)
   const [libJob, setLibJob] = useState<{ running: boolean; done: number; total: number; cost: number; error: string | null } | null>(null)
 
   useEffect(() => { checkBackend() }, [checkBackend])
+  useEffect(() => {
+    if (!confirming) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setConfirming(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [confirming])
   useEffect(() => {
     if (!libJob?.running) return
     const t = window.setInterval(async () => {
@@ -98,6 +105,8 @@ export default function Upload() {
 
   const liveOk = !!health && health.library > 0
   const est = estimate(crowdSize, rounds, health?.devMode ?? true, marketScan)
+  // Live runs with a real key cost money, so they are confirmed first with the size and the estimate.
+  const paid = engine === 'live' && !!health && health.provider !== 'fake'
   const providerLabel = health ? (health.provider === 'fake' ? 'fake provider (no API key, $0)' : `${health.crowdModel}${health.devMode ? ' + dev-mode analysts' : ` + ${health.analystModel}`}`) : 'backend offline'
 
   return (
@@ -186,12 +195,30 @@ export default function Upload() {
             </div>
           </div>
 
-          <button className="btn w-full justify-center text-base py-3" onClick={go} disabled={busy || (engine === 'live' && !liveOk)}>
+          <button className="btn w-full justify-center text-base py-3" onClick={() => paid ? setConfirming(true) : go()} disabled={busy || (engine === 'live' && !liveOk)}>
             {busy ? <Loader2 size={18} className="animate-spin" /> : <Play size={18} />} Run the crowd
           </button>
           {err && <div className="text-xs text-neg">{err}</div>}
         </div>
       </div>
+
+      {confirming && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setConfirming(false)}>
+          <div className="card p-5 max-w-sm w-full space-y-3" role="dialog" aria-modal="true" aria-labelledby="confirm-title" onClick={e => e.stopPropagation()}>
+            <h2 id="confirm-title" className="font-semibold text-lg">Start a paid run?</h2>
+            <div className="text-sm space-y-1">
+              <div><span className="text-muted">Crowd: </span><b>{crowdSize.toLocaleString()} agents</b> · {rounds} {rounds === 1 ? 'round' : 'rounds'}{marketScan ? ' · market scan' : ''}</div>
+              <div><span className="text-muted">Report written by: </span>{health?.devMode ? `${health.crowdModel} (cheaper dev mode)` : health?.analystModel}</div>
+              <div><span className="text-muted">Estimated cost: </span><b>${est.toFixed(2)}</b><span className="text-muted"> · stops at ${health?.runBudgetUsd ?? 2}</span></div>
+            </div>
+            {crowdSize > 300 && <div className="text-xs text-neu">That's a large crowd. A run of 100–300 agents is usually enough to check the result first.</div>}
+            <div className="flex gap-2 justify-end pt-1">
+              <button className="btn btn-ghost" onClick={() => setConfirming(false)}>Cancel</button>
+              <button className="btn" autoFocus onClick={() => { setConfirming(false); go() }}>Start run</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

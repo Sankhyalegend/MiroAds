@@ -197,7 +197,7 @@ export const useStore = create<State>((set, get) => {
     engine: 'live',
     health: null,
     stimulus: null,
-    crowdSize: 300,
+    crowdSize: 100,
     rounds: 5,
     speed: 3500,
     marketScan: true,
