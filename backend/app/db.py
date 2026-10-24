@@ -79,7 +79,16 @@ def conn() -> sqlite3.Connection:
         _conn.execute("PRAGMA journal_mode=WAL")
         _conn.execute("PRAGMA synchronous=NORMAL")
         _conn.executescript(SCHEMA)
+        _add_missing_columns(_conn, "run_agents", {"context": "TEXT"})
     return _conn
+
+
+def _add_missing_columns(c: sqlite3.Connection, table: str, cols: dict[str, str]) -> None:
+    """CREATE TABLE IF NOT EXISTS never alters an existing table, so columns added later are created here."""
+    have = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
+    for name, typ in cols.items():
+        if name not in have:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN {name} {typ}")
 
 
 def q(sql: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]:
@@ -179,6 +188,11 @@ def set_final_score(rid: str, agent_id: int, score: float) -> None:
     x("UPDATE run_agents SET final_score=? WHERE run_id=? AND agent_id=?", (score, rid, agent_id))
 
 
+def set_context(rid: str, agent_id: int, context: dict, mood: str, persona: dict) -> None:
+    """What the agent knows about the market, plus their mood after the news (also kept in the persona JSON)."""
+    x("UPDATE run_agents SET context=?, mood=?, persona=? WHERE run_id=? AND agent_id=?", (j(context), mood, j(persona), rid, agent_id))
+
+
 def append_action(rid: str, agent_id: int, action: dict) -> None:
     r = q("SELECT actions FROM run_agents WHERE run_id=? AND agent_id=?", (rid, agent_id))
     acts = uj(r[0]["actions"], []) if r else []
@@ -186,20 +200,19 @@ def append_action(rid: str, agent_id: int, action: dict) -> None:
     x("UPDATE run_agents SET actions=? WHERE run_id=? AND agent_id=?", (j(acts), rid, agent_id))
 
 
+def _agent_row(r: sqlite3.Row) -> dict:
+    d = uj(r["persona"]); d["verdict"] = uj(r["verdict"]); d["finalScore"] = r["final_score"]; d["actions"] = uj(r["actions"], [])
+    d["context"] = uj(r["context"])
+    return d
+
+
 def get_run_agents(rid: str) -> list[dict]:
-    out = []
-    for r in q("SELECT * FROM run_agents WHERE run_id=? ORDER BY agent_id", (rid,)):
-        d = uj(r["persona"]); d["verdict"] = uj(r["verdict"]); d["finalScore"] = r["final_score"]; d["actions"] = uj(r["actions"], [])
-        out.append(d)
-    return out
+    return [_agent_row(r) for r in q("SELECT * FROM run_agents WHERE run_id=? ORDER BY agent_id", (rid,))]
 
 
 def get_run_agent(rid: str, agent_id: int) -> dict | None:
     r = q("SELECT * FROM run_agents WHERE run_id=? AND agent_id=?", (rid, agent_id))
-    if not r:
-        return None
-    d = uj(r[0]["persona"]); d["verdict"] = uj(r[0]["verdict"]); d["finalScore"] = r[0]["final_score"]; d["actions"] = uj(r[0]["actions"], [])
-    return d
+    return _agent_row(r[0]) if r else None
 
 
 # ---- events ----

@@ -15,7 +15,23 @@ export interface Stimulus {
   /** Offer fields, if type === 'offer'. */
   offer?: { product: string; price: string; discount: string; urgency: string; terms: string }
   targetAudience: string
+  /** Optional hint for the market scan: competitors the maker already knows about. */
+  competitors?: string
 }
+
+/** What is already on the market, from the market scan (web search on the live engine, simulated offline). */
+export interface MarketBrief {
+  category: string
+  summary: string
+  priceRange: string
+  competitors: { name: string; maker: string; price: string; pitch: string; likedFor: string; complaints: string; url: string }[]
+  news: { headline: string; source: string; date: string; gist: string; url: string; tone: 'positive' | 'neutral' | 'negative' }[]
+  buyerComplaints: string[]
+  substitutes: string[]
+  sources: { url: string; title: string }[]
+}
+export type MarketStatus = 'ok' | 'simulated' | 'unavailable' | 'off'
+export interface MarketScan { status: MarketStatus; reason?: string; brief?: MarketBrief; moodShifts?: { wary?: number; excited?: number } }
 
 export type ProfessionGroup =
   | 'Engineering' | 'Design' | 'Marketing' | 'Finance' | 'Operations'
@@ -72,10 +88,11 @@ export type SimEvent =
   | { kind: 'round'; round: number; totalRounds: number; t: number }
   | { kind: 'expert'; name: string; role: string; finding: string; t: number }
   | { kind: 'crowd_ready'; n: number; t: number }
+  | ({ kind: 'market'; t: number } & MarketScan)
   | { kind: 'error'; message: string; t: number }
   | { kind: 'done'; t: number; costUsd?: number; failed?: boolean }
 
-export type Stage = 'idle' | 'impressions' | 'social' | 'experts' | 'judge' | 'done'
+export type Stage = 'idle' | 'market' | 'impressions' | 'social' | 'experts' | 'judge' | 'done'
 
 export interface DimensionScore { name: string; score: number; weight: number; note: string }
 export interface SegmentScore { segment: string; group: string; score: number; n: number; intent: number }
@@ -97,6 +114,7 @@ export interface Research {
   tokens?: Record<string, number>
   provider?: string
   models?: { crowd: string; analyst: string }
+  market?: Partial<MarketBrief> & { status: MarketStatus; reason?: string; moodShifts?: { wary?: number; excited?: number } }
 }
 
 export interface AgentDetail extends Persona {
@@ -106,6 +124,8 @@ export interface AgentDetail extends Persona {
   verdict?: { score: number; intent: string; reaction: string; objection: string; missing: string; price_reaction?: string; reasoning?: string; confidence?: number } | null
   finalScore?: number | null
   actions?: { round: number; action: string; text: string; target?: number | null; score: number; why?: string }[]
+  /** What they knew about the market, and their mood before the news shifted it. */
+  context?: { knows: string[]; owns?: string | null; newsSeen: string[]; moodBefore?: string; moodReason?: string } | null
 }
 
 export interface Scorecard {
@@ -115,6 +135,8 @@ export interface Scorecard {
   overall: number
   verdict: string
   summary: string
+  /** How it stacks up against what is already on the market. */
+  marketPosition?: string
   dimensions: DimensionScore[]
   segments: SegmentScore[]
   objections: Objection[]

@@ -31,17 +31,20 @@ const SAMPLE: Record<StimulusType, { title: string; brief: string }> = {
   },
 }
 
-const HAIKU_IN = 0.10 / 1e6, HAIKU_OUT = 0.50 / 1e6, SONNET_IN = 2 / 1e6, SONNET_OUT = 10 / 1e6
-function estimate(crowd: number, rounds: number, devMode: boolean) {
-  const stage1 = crowd * (2600 * HAIKU_IN + 260 * HAIKU_OUT)
-  const social = crowd * 0.15 * rounds * (3400 * HAIKU_IN + 160 * HAIKU_OUT)
-  const analysts = devMode ? 12 * (6000 * HAIKU_IN + 900 * HAIKU_OUT) : 9 * (6000 * SONNET_IN + 900 * SONNET_OUT) + 1 * (12000 * SONNET_IN + 2000 * SONNET_OUT)
-  return stage1 + social + analysts
+const HAIKU_IN = 0.10 / 1e6, HAIKU_OUT = 0.50 / 1e6, SONNET_IN = 2 / 1e6, SONNET_OUT = 10 / 1e6, SEARCH = 0.01
+function estimate(crowd: number, rounds: number, devMode: boolean, marketScan: boolean) {
+  const stage1 = crowd * (2750 * HAIKU_IN + 260 * HAIKU_OUT)
+  // Everyone opens the app at least once, on top of the activity-weighted turns each round.
+  const social = crowd * (0.15 * rounds + (rounds > 0 ? 0.4 : 0)) * (3550 * HAIKU_IN + 160 * HAIKU_OUT)
+  const analysts = devMode ? 13 * (6500 * HAIKU_IN + 900 * HAIKU_OUT) : 10 * (6500 * SONNET_IN + 900 * SONNET_OUT) + 1 * (13000 * SONNET_IN + 2000 * SONNET_OUT)
+  // Research reads every search result (~120K tokens) on Haiku; the extraction runs on the analyst model.
+  const market = marketScan ? 8 * SEARCH + 125000 * HAIKU_IN + 17000 * HAIKU_OUT + (devMode ? 6000 * HAIKU_IN + 2500 * HAIKU_OUT : 6000 * SONNET_IN + 2500 * SONNET_OUT) : 0
+  return stage1 + social + analysts + market
 }
 
 export default function Upload() {
   const nav = useNavigate()
-  const { setStimulus, crowdSize, setCrowdSize, rounds, setRounds, start, engine, setEngine, health, checkBackend } = useStore()
+  const { setStimulus, crowdSize, setCrowdSize, rounds, setRounds, start, engine, setEngine, health, checkBackend, marketScan, setMarketScan } = useStore()
   const [type, setType] = useState<StimulusType>('creative')
   const [title, setTitle] = useState(SAMPLE.creative.title)
   const [brief, setBrief] = useState(SAMPLE.creative.brief)
@@ -49,6 +52,7 @@ export default function Upload() {
   const [imageUrl, setImageUrl] = useState<string | undefined>()
   const [offer, setOffer] = useState({ product: 'Nightshift smart desk lamp', price: '$149', discount: '$30 off first 500 units', urgency: 'Ends 7 November', terms: '2-year warranty, no subscription' })
   const [audience, setAudience] = useState('Remote software developers 25-40, students, productivity enthusiasts; plus a general-public control sample')
+  const [competitors, setCompetitors] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [libN, setLibN] = useState(2000)
@@ -75,7 +79,7 @@ export default function Upload() {
     const s: Stimulus = {
       type, title: title || 'Untitled', targetAudience: audience,
       brief: type === 'offer' ? `${offer.product}. Price ${offer.price}. ${offer.discount}. ${offer.urgency}. Terms: ${offer.terms}. ${brief}` : type === 'website' ? `Website ${url}. ${brief}` : brief,
-      imageUrl, url: url || undefined, offer: type === 'offer' ? offer : undefined,
+      imageUrl, url: url || undefined, offer: type === 'offer' ? offer : undefined, competitors: competitors.trim() || undefined,
     }
     setStimulus(s)
     const id = await start()
@@ -93,7 +97,7 @@ export default function Upload() {
   }
 
   const liveOk = !!health && health.library > 0
-  const est = estimate(crowdSize, rounds, health?.devMode ?? true)
+  const est = estimate(crowdSize, rounds, health?.devMode ?? true, marketScan)
   const providerLabel = health ? (health.provider === 'fake' ? 'fake provider (no API key, $0)' : `${health.crowdModel}${health.devMode ? ' + dev-mode analysts' : ` + ${health.analystModel}`}`) : 'backend offline'
 
   return (
@@ -130,6 +134,7 @@ export default function Upload() {
           )}
           <div><label className="text-xs text-muted">{type === 'idea' ? 'Describe the idea' : 'Describe what the crowd sees'}</label><textarea className="input mt-1 min-h-[140px]" value={brief} onChange={e => setBrief(e.target.value)} /></div>
           <div><label className="text-xs text-muted">Target audience (the sample is weighted toward this, with contrarian and outsider quotas)</label><input className="input mt-1" value={audience} onChange={e => setAudience(e.target.value)} /></div>
+          <div><label className="text-xs text-muted">Competitors you already know about (optional, helps the market scan)</label><input className="input mt-1" placeholder="e.g. BenQ ScreenBar, Philips Hue, a $12 timer plug" value={competitors} onChange={e => setCompetitors(e.target.value)} /></div>
         </div>
 
         <div className="space-y-4">
@@ -169,6 +174,13 @@ export default function Upload() {
               <div className="flex justify-between text-sm"><span className="text-muted">Social rounds</span><span className="font-semibold">{rounds}</span></div>
               <input type="range" min={0} max={10} value={rounds} onChange={e => setRounds(Number(e.target.value))} className="w-full mt-2 accent-[#7c9cff]" />
             </div>
+            <label className="flex items-start gap-2 text-sm cursor-pointer">
+              <input type="checkbox" className="mt-1 accent-[#7c9cff]" checked={marketScan} onChange={e => setMarketScan(e.target.checked)} />
+              <span>
+                Scan the market first
+                <span className="block text-xs text-muted">Web search for competitors, prices and news. Each agent only knows what someone like them would have come across, and the news can shift their mood{engine === 'live' && health?.provider !== 'fake' ? ' (about $0.10–0.14 per run)' : ''}.</span>
+              </span>
+            </label>
             <div className="text-xs text-muted">
               {engine === 'live' && health?.provider !== 'fake' ? <>Estimated cost: <b className="text-text">${est.toFixed(2)}</b> · run budget cap ${health?.runBudgetUsd ?? 2}</> : 'No API cost with the mock or fake provider.'}
             </div>

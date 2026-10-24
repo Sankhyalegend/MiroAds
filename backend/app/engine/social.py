@@ -12,6 +12,7 @@ from .. import db
 from ..llm import Meter, llm
 from ..personas.frame import persona_card
 from .events import bus
+from .market import market_block
 from .stimulus import stimulus_block
 
 ACTION_SCHEMA = {
@@ -164,7 +165,7 @@ async def run_social(run_id: str, stimulus: dict, agents: list[dict], verdicts: 
                 + (f" (reply to post {p.reply_to})" if p.reply_to else "") + (f" · {p.replies} replies, {p.reposts} reposts, {p.likes} likes" if p.replies or p.reposts or p.likes else "")
                 for p in feed) or "(feed is empty)"
             first = v.get("score", my)
-            user = (f"{persona_card(agent['_sk'], agent['_profile'], agent['mood'])}\n\n"
+            user = (f"{persona_card(agent['_sk'], agent['_profile'], agent['mood'], agent.get('_mood_reason', ''))}{market_block(agent)}\n\n"
                     f"Your first impression, before any discussion: {first:.1f}/10. You said: \"{v.get('reaction', '')}\"\n"
                     f"Your score right now: {my:.1f}/10.\n\n"
                     f"Round {r} of the discussion. Your feed right now:\n{feed_txt}\n\nDecide what you do (or don't). JSON only.")

@@ -30,6 +30,7 @@ class StimulusIn(BaseModel):
     imageUrl: Optional[str] = None
     url: Optional[str] = None
     offer: Optional[dict[str, Any]] = None
+    competitors: str = ""  # optional hint for the market scan
 
 
 class RunIn(BaseModel):
@@ -38,6 +39,7 @@ class RunIn(BaseModel):
     rounds: int = Field(default=5, ge=0, le=12)
     seed: int = 42
     budgetUsd: Optional[float] = None
+    marketScan: bool = True
 
 
 class LibraryBuildIn(BaseModel):
@@ -134,7 +136,7 @@ def run_view(rid: str) -> dict:
     if not r:
         raise HTTPException(404, "run not found")
     agents = db.get_run_agents(rid)
-    personas = [{k: v for k, v in a.items() if k not in ("verdict", "finalScore", "actions")} for a in agents]
+    personas = [{k: v for k, v in a.items() if k not in ("verdict", "finalScore", "actions", "context")} for a in agents]
     return {"id": rid, "status": r["status"], "stage": r["stage"], "costUsd": round(r["cost_usd"], 4), "tokens": r["tokens"], "error": r["error"],
             "config": r["config"], "stimulus": db.get_stimulus(r["stimulus_id"]), "personas": personas, "lastSeq": db.max_seq(rid),
             "hasScorecard": db.get_scorecard(rid) is not None}

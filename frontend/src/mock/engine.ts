@@ -1,6 +1,6 @@
 import type {
   Persona, Stimulus, StimulusType, Verdict, SimEvent, Scorecard, DimensionScore, SegmentScore,
-  Objection, MissingKpi, Variant,
+  Objection, MissingKpi, Variant, MarketBrief,
 } from '../types'
 import { mulberry32, PROFESSION_GROUPS } from './personas'
 
@@ -18,8 +18,49 @@ export interface EngineOptions {
   /** Wall-clock ms per social round. */
   msPerRound: number
   seed?: number
+  /** Emit a simulated market scan before first impressions. */
+  marketScan?: boolean
   onEvent: (e: SimEvent) => void
 }
+
+const PRODUCT_MARKET: MarketBrief = {
+  category: 'Consumer gadgets in this category (simulated)',
+  summary: 'Simulated market: a well-known leader, a cheap marketplace option, a premium design rival and a DIY workaround already cover most of the need. Not real market data.',
+  priceRange: '$12 DIY, $25-99 mainstream, $200+ premium',
+  competitors: [
+    { name: 'Category leader', maker: 'Big brand', price: '$99', pitch: 'The one most people have heard of', likedFor: 'reliable, lots of reviews', complaints: 'pricey, the app wants an account', url: '' },
+    { name: 'Budget pick', maker: 'Marketplace brand', price: '$25', pitch: 'Does the basics for a quarter of the price', likedFor: 'cheap and good enough', complaints: 'flimsy, uneven quality', url: '' },
+    { name: 'Premium rival', maker: 'Design brand', price: '$220', pitch: 'Beautiful object, premium materials', likedFor: 'looks great on a desk', complaints: 'overpriced for what it does', url: '' },
+    { name: 'Timer plug hack', maker: 'Generic', price: '$12', pitch: 'A smart plug on a schedule does the main trick', likedFor: 'costs almost nothing', complaints: 'fiddly setup, no colour control', url: '' },
+  ],
+  news: [
+    { headline: 'Shoppers trade down as gadget prices rise', source: 'Simulated Daily', date: '2026', gist: 'Mid-priced devices lose share to cheap marketplace brands.', url: '', tone: 'negative' },
+    { headline: 'Reviewers warm to a new wave of well-designed home devices', source: 'Simulated Tech', date: '2026', gist: 'Design-led products get strong reviews and social buzz.', url: '', tone: 'positive' },
+    { headline: 'Regulators look at subscription traps in connected devices', source: 'Simulated Times', date: '2026', gist: 'Apps that lock features behind subscriptions draw complaints.', url: '', tone: 'negative' },
+  ],
+  buyerComplaints: ['apps that need an account', 'short lifespan', 'prices that hide subscriptions'],
+  substitutes: ['a smart plug on a timer', 'doing nothing and living with it'],
+  sources: [],
+}
+const IDEA_MARKET: MarketBrief = {
+  category: 'Software and services for this need (simulated)',
+  summary: 'Simulated market: an incumbent platform, agencies, a DIY spreadsheet-and-survey routine and a funded startup already compete for the same budget. Not real market data.',
+  priceRange: '$0 DIY, $50-300/month tools, $5k+ agency projects',
+  competitors: [
+    { name: 'Incumbent platform', maker: 'Large vendor', price: '$300/month', pitch: 'The default enterprise choice', likedFor: 'trusted, integrates with everything', complaints: 'expensive, slow to set up', url: '' },
+    { name: 'Agency or consultants', maker: 'Various', price: '$5,000+ per project', pitch: 'Humans do it for you', likedFor: 'real expertise', complaints: 'slow and costly', url: '' },
+    { name: 'Spreadsheet + survey tool', maker: 'DIY', price: '$0-30/month', pitch: 'What most small teams do today', likedFor: 'cheap and flexible', complaints: 'manual, error-prone', url: '' },
+    { name: 'Well-funded startup', maker: 'VC-backed', price: '$99/month', pitch: 'Modern, AI-first take on the problem', likedFor: 'slick product', complaints: 'unproven, may pivot', url: '' },
+  ],
+  news: [
+    { headline: 'Budgets tighten for new software tools', source: 'Simulated Business', date: '2026', gist: 'Teams consolidate tools and cut experiments.', url: '', tone: 'negative' },
+    { headline: 'AI tools win over small teams', source: 'Simulated Tech', date: '2026', gist: 'Adoption of AI-first tools keeps rising among startups.', url: '', tone: 'positive' },
+  ],
+  buyerComplaints: ['hard to prove ROI', 'another tool to learn', 'pricing that scales too fast'],
+  substitutes: ['doing it by hand', 'asking a few customers directly'],
+  sources: [],
+}
+export const MOCK_MARKET: Record<StimulusType, MarketBrief> = { creative: PRODUCT_MARKET, website: PRODUCT_MARKET, offer: PRODUCT_MARKET, idea: IDEA_MARKET }
 
 type Bank = { objections: string[]; missing: string[]; praise: string[]; kpis: MissingKpi[]; variants: Variant[]; dims: { name: string; weight: number }[] }
 
@@ -212,11 +253,20 @@ export function runMockSimulation(opts: EngineOptions): { stop: () => void } {
   const posts: { id: number; agentId: number; score: number; round: number }[] = []
   let postId = 0
 
+  // ---- Stage 0: market scan (simulated) ----
+  const t0 = opts.marketScan === false ? 0 : 1400
+  if (t0) {
+    onEvent({ kind: 'stage', stage: 'market', t: now() })
+    later(t0 - 200, () => onEvent({ kind: 'market', status: 'simulated', brief: MOCK_MARKET[stimulus.type], t: now() }))
+  } else {
+    onEvent({ kind: 'market', status: 'off', t: now() })
+  }
+
   // ---- Stage 1: impressions (burst, fast) ----
-  onEvent({ kind: 'stage', stage: 'impressions', t: now() })
+  later(t0, () => onEvent({ kind: 'stage', stage: 'impressions', t: now() }))
   const impressionMs = Math.min(4000, 400 + personas.length * 2.2)
   personas.forEach((p, i) => {
-    later((i / personas.length) * impressionMs, () => {
+    later(t0 + (i / personas.length) * impressionMs, () => {
       const a = baseAffinity(p, stimulus, rng)
       const score = Math.round(a * 100) / 10
       scores.set(p.id, score); initialScores.set(p.id, score)
@@ -233,7 +283,7 @@ export function runMockSimulation(opts: EngineOptions): { stop: () => void } {
   })
 
   // ---- Stage 2: social rounds ----
-  const socialStart = impressionMs + 600
+  const socialStart = t0 + impressionMs + 600
   later(socialStart, () => onEvent({ kind: 'stage', stage: 'social', t: now() }))
   const byInfluence = [...personas].sort((a, b) => b.influence - a.influence)
   const opened = new Set<number>()  // everyone opens the app at least once over the rounds

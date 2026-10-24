@@ -50,4 +50,43 @@ RESEARCH_TEAM: list[dict] = [
     {"name": "Product counsel", "lens": "Claims that need substantiation, regulatory exposure, terms and disclosure risks."},
     {"name": "Operations lead", "lens": "Deliverability: fulfilment, support load, returns, scaling constraints implied by the promise."},
     {"name": "Sceptic-in-residence", "lens": "The strongest case against. Assume the crowd is too kind; find what would make this fail."},
+    {"name": "Competitive analyst", "lens": "Position against what is already on the market (from the market scan): price position, real differentiation, switching cost from what people already own, and which competitor wins each segment."},
 ]
+
+# Offline stand-in for the market scan: a clearly labelled, generic market so the feature still demos without a key.
+_PRODUCT_MARKET = {
+    "category": "Consumer gadgets in this category (simulated)",
+    "summary": "Simulated market: a well-known leader, a cheap marketplace option, a premium design rival and a DIY workaround already cover most of the need. Not real market data.",
+    "price_range": "$12 DIY, $25-99 mainstream, $200+ premium",
+    "competitors": [
+        {"name": "Category leader", "maker": "Big brand", "price": "$99", "pitch": "The one most people have heard of", "liked_for": "reliable, lots of reviews", "complaints": "pricey, the app wants an account", "url": ""},
+        {"name": "Budget pick", "maker": "Marketplace brand", "price": "$25", "pitch": "Does the basics for a quarter of the price", "liked_for": "cheap and good enough", "complaints": "flimsy, uneven quality", "url": ""},
+        {"name": "Premium rival", "maker": "Design brand", "price": "$220", "pitch": "Beautiful object, premium materials", "liked_for": "looks great on a desk", "complaints": "overpriced for what it does", "url": ""},
+        {"name": "Timer plug hack", "maker": "Generic", "price": "$12", "pitch": "A smart plug on a schedule does the main trick", "liked_for": "costs almost nothing", "complaints": "fiddly setup, no colour control", "url": ""},
+    ],
+    "news": [
+        {"headline": "Shoppers trade down as gadget prices rise", "source": "Simulated Daily", "date": "2026", "gist": "Mid-priced devices lose share to cheap marketplace brands.", "url": "", "tone": "negative"},
+        {"headline": "Reviewers warm to a new wave of well-designed home devices", "source": "Simulated Tech", "date": "2026", "gist": "Design-led products get strong reviews and social buzz.", "url": "", "tone": "positive"},
+        {"headline": "Regulators look at subscription traps in connected devices", "source": "Simulated Times", "date": "2026", "gist": "Apps that lock features behind subscriptions draw complaints.", "url": "", "tone": "negative"},
+    ],
+    "buyer_complaints": ["apps that need an account", "short lifespan", "prices that hide subscriptions"],
+    "substitutes": ["a smart plug on a timer", "doing nothing and living with it"],
+}
+_IDEA_MARKET = {
+    "category": "Software and services for this need (simulated)",
+    "summary": "Simulated market: an incumbent platform, agencies, a DIY spreadsheet-and-survey routine and a funded startup already compete for the same budget. Not real market data.",
+    "price_range": "$0 DIY, $50-300/month tools, $5k+ agency projects",
+    "competitors": [
+        {"name": "Incumbent platform", "maker": "Large vendor", "price": "$300/month", "pitch": "The default enterprise choice", "liked_for": "trusted, integrates with everything", "complaints": "expensive, slow to set up", "url": ""},
+        {"name": "Agency or consultants", "maker": "Various", "price": "$5,000+ per project", "pitch": "Humans do it for you", "liked_for": "real expertise", "complaints": "slow and costly", "url": ""},
+        {"name": "Spreadsheet + survey tool", "maker": "DIY", "price": "$0-30/month", "pitch": "What most small teams do today", "liked_for": "cheap and flexible", "complaints": "manual, error-prone", "url": ""},
+        {"name": "Well-funded startup", "maker": "VC-backed", "price": "$99/month", "pitch": "Modern, AI-first take on the problem", "liked_for": "slick product", "complaints": "unproven, may pivot", "url": ""},
+    ],
+    "news": [
+        {"headline": "Budgets tighten for new software tools", "source": "Simulated Business", "date": "2026", "gist": "Teams consolidate tools and cut experiments.", "url": "", "tone": "negative"},
+        {"headline": "AI tools win over small teams", "source": "Simulated Tech", "date": "2026", "gist": "Adoption of AI-first tools keeps rising among startups.", "url": "", "tone": "positive"},
+    ],
+    "buyer_complaints": ["hard to prove ROI", "another tool to learn", "pricing that scales too fast"],
+    "substitutes": ["doing it by hand", "asking a few customers directly"],
+}
+FAKE_MARKET: dict[str, dict] = {"creative": _PRODUCT_MARKET, "website": _PRODUCT_MARKET, "offer": _PRODUCT_MARKET, "idea": _IDEA_MARKET}

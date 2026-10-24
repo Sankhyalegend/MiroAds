@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Persona, Scorecard, SimEvent, Stage, Stimulus } from './types'
+import type { MarketScan, Persona, Scorecard, SimEvent, Stage, Stimulus } from './types'
 import { generatePersonas } from './mock/personas'
 import { runMockSimulation, getLastScorecard } from './mock/engine'
 import { bus } from './mock/bus'
@@ -43,6 +43,8 @@ interface State {
   crowdSize: number
   rounds: number
   speed: number
+  /** Run a market scan (competitors, prices, news) before first impressions. */
+  marketScan: boolean
   personas: Persona[]
   runId: string | null
   stage: Stage
@@ -53,6 +55,7 @@ interface State {
   posts: Record<number, AppPost>
   /** Post ids in arrival order. */
   postOrder: number[]
+  market: MarketScan | null
   expertFindings: { name: string; role: string; finding: string }[]
   scorecard: Scorecard | null
   running: boolean
@@ -66,6 +69,7 @@ interface State {
   setCrowdSize: (n: number) => void
   setRounds: (n: number) => void
   setSpeed: (ms: number) => void
+  setMarketScan: (on: boolean) => void
   start: () => Promise<string | null>
   loadRun: (id: string) => Promise<void>
   stop: () => void
@@ -97,7 +101,7 @@ export const useStore = create<State>((set, get) => {
       if (id == null || !posts[id]) return
       touchPosts(); posts[id] = { ...posts[id], [field]: posts[id][field] + 1 }
     }
-    let stage = s.stage, round = s.round, totalRounds = s.totalRounds, costUsd = s.costUsd, error = s.error, running = s.running
+    let stage = s.stage, round = s.round, totalRounds = s.totalRounds, costUsd = s.costUsd, error = s.error, running = s.running, market = s.market
     for (const e of evs) {
       switch (e.kind) {
         case 'stage': stage = e.stage; break
@@ -132,6 +136,15 @@ export const useStore = create<State>((set, get) => {
           feed.push({ id: ++feedId, kind: 'expert', text: `${e.name} (${e.role}): ${e.finding}`, t: e.t }); break
         case 'crowd_ready':
           feed.push({ id: ++feedId, kind: 'system', text: `Crowd of ${e.n} sampled from the library.`, t: e.t }); break
+        case 'market': {
+          market = { status: e.status, reason: e.reason, brief: e.brief, moodShifts: e.moodShifts }
+          const b = e.brief, ms = e.moodShifts
+          const moods = ms && (ms.wary || ms.excited) ? ` The news made ${ms.wary ?? 0} people wary and ${ms.excited ?? 0} excited.` : ''
+          const text = e.status === 'off' ? 'Market scan skipped for this run.'
+            : e.status === 'unavailable' ? `Market scan unavailable: ${e.reason ?? 'unknown error'}. Agents judge it blind.`
+            : `Market scan${e.status === 'simulated' ? ' (simulated)' : ''}: ${b?.competitors.length ?? 0} alternatives and ${b?.news.length ?? 0} news items in ${b?.category ?? 'this category'}.${moods}`
+          feed.push({ id: ++feedId, kind: 'system', text, t: e.t }); break
+        }
         case 'error':
           error = e.message
           feed.push({ id: ++feedId, kind: 'system', text: `Error: ${e.message}`, t: e.t }); break
@@ -143,7 +156,7 @@ export const useStore = create<State>((set, get) => {
           break
       }
     }
-    set({ counters, feed: feed.slice(-250), posts, postOrder, expertFindings, stage, round, totalRounds, costUsd, error, running, liveMean: live.n ? live.sum / live.n : 0 })
+    set({ counters, feed: feed.slice(-250), posts, postOrder, market, expertFindings, stage, round, totalRounds, costUsd, error, running, liveMean: live.n ? live.sum / live.n : 0 })
   }
 
   const flush = () => { flushTimer = null; const evs = pending; pending = []; applyEvents(evs) }
@@ -157,7 +170,7 @@ export const useStore = create<State>((set, get) => {
     live.scores = new Float32Array(personas.length).fill(-1)
     live.sum = 0; live.n = 0
     pending = []
-    set({ personas, stage: 'impressions', round: 0, totalRounds: rounds, running: true, counters: { ...EMPTY }, feed: [], posts: {}, postOrder: [], expertFindings: [], scorecard: null, liveMean: 0, costUsd: 0, error: null })
+    set({ personas, stage: 'idle', round: 0, totalRounds: rounds, running: true, counters: { ...EMPTY }, feed: [], posts: {}, postOrder: [], market: null, expertFindings: [], scorecard: null, liveMean: 0, costUsd: 0, error: null })
   }
 
   const attachWs = (runId: string, fromSeq: number) => {
@@ -175,6 +188,7 @@ export const useStore = create<State>((set, get) => {
     crowdSize: 300,
     rounds: 5,
     speed: 3500,
+    marketScan: true,
     personas: [],
     runId: null,
     stage: 'idle',
@@ -184,6 +198,7 @@ export const useStore = create<State>((set, get) => {
     feed: [],
     posts: {},
     postOrder: [],
+    market: null,
     expertFindings: [],
     scorecard: null,
     running: false,
@@ -200,21 +215,22 @@ export const useStore = create<State>((set, get) => {
     setCrowdSize: (crowdSize) => set({ crowdSize }),
     setRounds: (rounds) => set({ rounds }),
     setSpeed: (speed) => set({ speed }),
+    setMarketScan: (marketScan) => set({ marketScan }),
 
     start: async () => {
-      const { stimulus, crowdSize, rounds, speed, engine } = get()
+      const { stimulus, crowdSize, rounds, speed, engine, marketScan } = get()
       if (!stimulus) return null
       stopper?.stop(); closeWs?.(); closeWs = null
       if (engine === 'mock') {
         const personas = generatePersonas(crowdSize, 42)
         freshRunState(personas, rounds)
         set({ runId: null })
-        stopper = runMockSimulation({ stimulus, personas, rounds, msPerRound: speed, seed: 7, onEvent: ingest })
+        stopper = runMockSimulation({ stimulus, personas, rounds, msPerRound: speed, seed: 7, marketScan, onEvent: ingest })
         return 'mock'
       }
       try {
         const { id: stimulus_id } = await api.createStimulus(stimulus)
-        const run = await api.createRun({ stimulus_id, crowdSize, rounds, seed: 42 })
+        const run = await api.createRun({ stimulus_id, crowdSize, rounds, seed: 42, marketScan })
         freshRunState(run.personas, rounds)
         set({ runId: run.id })
         attachWs(run.id, 0)
@@ -246,6 +262,6 @@ export const useStore = create<State>((set, get) => {
       if (engine === 'live' && runId) api.stopRun(runId).catch(() => {})
       set({ running: false })
     },
-    reset: () => { stopper?.stop(); stopper = null; closeWs?.(); closeWs = null; set({ stage: 'idle', running: false, scorecard: null, feed: [], posts: {}, postOrder: [], personas: [], runId: null, error: null }) },
+    reset: () => { stopper?.stop(); stopper = null; closeWs?.(); closeWs = null; set({ stage: 'idle', running: false, scorecard: null, feed: [], posts: {}, postOrder: [], market: null, personas: [], runId: null, error: null }) },
   }
 })

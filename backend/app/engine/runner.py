@@ -12,6 +12,7 @@ from ..personas.sampler import composition, sample_crowd
 from .events import bus
 from .experts import run_experts
 from .judge import compute_stats, run_judge
+from .market import apply_market, run_market_scan
 from .social import run_social
 from .stage1 import run_stage1
 from .stimulus import build_brief
@@ -73,6 +74,14 @@ async def execute_run(run_id: str) -> None:
         stimulus = await build_brief(stimulus, meter)
         db.save_stimulus(run["stimulus_id"], stimulus)
 
+        # ---- stage 0b: market scan; each agent gets the slice they'd plausibly know, and news can shift mood ----
+        market: dict = {"status": "off"}
+        if cfg.get("marketScan", True):
+            await _set_stage(run_id, "market")
+            market = await run_market_scan(stimulus, crowd, meter)
+        shifts = apply_market(run_id, crowd, market.get("brief"), state["seed"])
+        await bus.emit(run_id, {"kind": "market", **market, "moodShifts": shifts})
+
         # ---- stage 1 ----
         await _set_stage(run_id, "impressions")
         verdicts = await run_stage1(run_id, stimulus, crowd, meter, state)
@@ -94,11 +103,13 @@ async def execute_run(run_id: str) -> None:
         experts = []
         if not state["stopped"]:
             await _set_stage(run_id, "experts")
-            experts = await run_experts(run_id, stimulus, stats, stats["top_posts"], meter, state)
+            experts = await run_experts(run_id, stimulus, stats, stats["top_posts"], meter, state, market.get("brief"))
 
         # ---- stage 4 ----
         await _set_stage(run_id, "judge")
-        scorecard = await run_judge(stimulus, stats, experts, comp, meter, state, meter.cost_usd)
+        scorecard = await run_judge(stimulus, stats, experts, comp, meter, state, meter.cost_usd, market.get("brief"))
+        scorecard["research"]["market"] = {"status": market["status"], **({"reason": market["reason"]} if market.get("reason") else {}),
+                                           **(market.get("brief") or {}), "moodShifts": shifts}
         if state["stopped"]:
             scorecard["confidence"]["note"] += f" Run ended early: {state.get('stop_reason', 'stopped')}."
         scorecard["research"]["costUsd"] = round(meter.cost_usd, 3)

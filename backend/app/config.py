@@ -23,6 +23,8 @@ PRICING: dict[str, dict[str, float]] = {
     "claude-opus-5-5": {"in": 4.00, "out": 20.00, "cache_read": 0.20, "cache_write": 5.00},
     "fake": {"in": 0.0, "out": 0.0, "cache_read": 0.0, "cache_write": 0.0},
 }
+# Claude's web search tool, billed per search on top of tokens ($10 per 1,000).
+WEB_SEARCH_USD = 0.01
 
 
 @dataclass
@@ -32,6 +34,8 @@ class Settings:
     provider: str = field(default_factory=lambda: _env("LLM_PROVIDER", "auto"))
     crowd_model: str = field(default_factory=lambda: _env("CROWD_MODEL", "claude-haiku-5-5"))
     analyst_model: str = field(default_factory=lambda: _env("ANALYST_MODEL", "claude-sonnet-5-5"))
+    # Market scan research. Search results are read in full (100K+ input tokens), so it defaults to the crowd model.
+    market_model: str = field(default_factory=lambda: _env("MARKET_MODEL", _env("CROWD_MODEL", "claude-haiku-5-5")))
     # Dev mode runs the analyst roles (experts, judge) on the crowd model to save money.
     dev_mode: bool = field(default_factory=lambda: _env("DEV_MODE", "true").lower() in ("1", "true", "yes"))
     run_budget_usd: float = field(default_factory=lambda: float(_env("RUN_BUDGET_USD", "2.0")))
@@ -52,6 +56,8 @@ class Settings:
             return "fake"
         if role == "crowd":
             return self.crowd_model
+        if role == "market":
+            return self.market_model
         return self.crowd_model if self.dev_mode else self.analyst_model
 
 

@@ -43,6 +43,18 @@ export default function AgentPanel({ runId, persona, onClose }: { runId: string 
       {ex.lens && <div className="text-xs"><span className="text-muted">How they judge: </span>{String(ex.lens)}</div>}
       {Array.isArray(ex.petPeeves) && ex.petPeeves.length > 0 && <div className="text-xs"><span className="text-muted">Pet peeves: </span>{(ex.petPeeves as string[]).join('; ')}</div>}
 
+      {d.context && (
+        <div className="bg-panel-2 rounded-lg p-3 space-y-1.5">
+          <div className="text-xs text-muted uppercase tracking-wide">What they know about the market</div>
+          {d.context.moodBefore && <div className="text-xs"><span className="text-muted">Mood: </span><b>{d.mood}</b> (was {d.context.moodBefore}): {d.context.moodReason}</div>}
+          {d.context.knows.length > 0
+            ? <ul className="text-xs list-disc pl-4 space-y-0.5">{d.context.knows.map(k => <li key={k}>{k}</li>)}</ul>
+            : <div className="text-xs text-muted">Doesn't know any similar products.</div>}
+          {d.context.newsSeen.map(n => <div key={n} className="text-xs"><span className="text-muted">Read: </span>{n}</div>)}
+          {d.context.owns && <div className="text-xs"><span className="text-muted">Already uses: </span>{d.context.owns}</div>}
+        </div>
+      )}
+
       {d.verdict ? (
         <div className="bg-panel-2 rounded-lg p-3 space-y-1.5">
           <div className="text-xs text-muted uppercase tracking-wide">First impression · {d.verdict.score.toFixed(1)} · {d.verdict.intent}</div>

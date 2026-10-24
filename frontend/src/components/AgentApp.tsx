@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from 'react'
-import { MessageSquare, Repeat2, Heart, Sparkles, Search } from 'lucide-react'
+import { MessageSquare, Repeat2, Heart, Sparkles, Search, Store, Newspaper } from 'lucide-react'
 import { useStore, type AppPost } from '../store'
 import { GROUP_COLORS, PROFESSION_GROUPS, hexToCss } from '../mock/personas'
 import type { Persona } from '../types'
@@ -13,11 +13,100 @@ interface Thread { root: AppPost; replies: AppPost[]; last: number; engagement: 
 
 const stanceOk = (s: number, st: Stance) => st === 'all' || (st === 'for' ? s >= 6.5 : st === 'against' ? s < 4 : s >= 4 && s < 6.5)
 
-/** The social app the agents use during the discussion: threads, reposts, likes, and who changed whose mind. */
+type Tab = 'feed' | 'market'
+
+/** The social app the agents use during the discussion (threads, reposts, likes, who changed whose mind),
+ *  plus what was already on the market when they looked. */
 export default function AgentApp({ onSelect }: { onSelect: (agentId: number) => void }) {
+  const [tab, setTab] = useState<Tab>('feed')
+  const postCount = useStore(s => s.postOrder.length)
+  const market = useStore(s => s.market)
+  const tabs: { id: Tab; label: string; icon: React.ReactNode; note?: string }[] = [
+    { id: 'feed', label: 'Feed', icon: <MessageSquare size={13} />, note: postCount ? postCount.toLocaleString() : undefined },
+    { id: 'market', label: 'Market', icon: <Store size={13} />, note: market?.status === 'ok' ? `${market.brief?.competitors.length ?? 0} alternatives` : market?.status },
+  ]
   return (
     <div className="h-full flex flex-col min-h-0">
-      <Feed onSelect={onSelect} />
+      <div className="px-3 pt-2 flex items-center gap-1 border-b border-line">
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`px-3 py-1.5 text-xs flex items-center gap-1.5 border-b-2 -mb-px ${tab === t.id ? 'border-accent text-text' : 'border-transparent text-muted hover:text-text'}`}>
+            {t.icon}{t.label}{t.note && <span className="text-muted">· {t.note}</span>}
+          </button>
+        ))}
+      </div>
+      {tab === 'feed' ? <Feed onSelect={onSelect} /> : <Market />}
+    </div>
+  )
+}
+
+function Market() {
+  const market = useStore(s => s.market)
+  const marketPosition = useStore(s => s.scorecard?.marketPosition)
+  const empty = (text: string) => <div className="text-muted text-sm text-center mt-10 px-6">{text}</div>
+  if (!market) return empty('The market scan runs before first impressions.')
+  if (market.status === 'off') return empty('The market scan was turned off for this run, so the agents judged it without knowing the alternatives.')
+  if (market.status === 'unavailable' || !market.brief) return empty(`Market scan unavailable (${market.reason ?? 'unknown error'}), so the agents judged it without knowing the alternatives.`)
+  const b = market.brief, ms = market.moodShifts
+  return (
+    <div className="flex-1 overflow-y-auto p-4 space-y-4 text-sm">
+      <div className="card p-4">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-muted uppercase tracking-wide">{b.category}</span>
+          {market.status === 'simulated' && <span className="chip" style={{ borderColor: '#f5c242', color: '#f5c242' }}>simulated, not real market data</span>}
+        </div>
+        <p className="mt-1 leading-relaxed">{b.summary}</p>
+        <div className="mt-2 text-xs text-muted">Price range: <b className="text-text">{b.priceRange}</b></div>
+        {ms && (ms.wary || ms.excited) ? <div className="mt-1 text-xs text-muted">The news put {ms.wary ?? 0} agents in a wary mood and {ms.excited ?? 0} in an excited one.</div> : null}
+        {marketPosition && <div className="mt-2 text-xs"><span className="text-muted">The report's take: </span>{marketPosition}</div>}
+        <div className="mt-2 text-[11px] text-muted">Each agent only knew part of this, depending on their feeds and how early they adopt tech. About 30% of buyers and users already own an alternative.</div>
+      </div>
+      <div>
+        <div className="text-xs text-muted uppercase tracking-wide mb-2 flex items-center gap-1.5"><Store size={12} /> Already on the market</div>
+        <div className="grid sm:grid-cols-2 gap-2">
+          {b.competitors.map(c => (
+            <div key={c.name} className="card p-3">
+              <div className="flex items-baseline gap-2 min-w-0">
+                <span className="font-semibold truncate">{c.url ? <a href={c.url} target="_blank" rel="noreferrer" className="hover:underline">{c.name}</a> : c.name}</span>
+                <span className="text-xs text-muted truncate">{c.maker}</span>
+                <span className="ml-auto font-semibold text-accent shrink-0">{c.price}</span>
+              </div>
+              <div className="text-xs mt-1">{c.pitch}</div>
+              <div className="text-xs mt-1.5"><span className="text-pos">Liked for: </span>{c.likedFor}</div>
+              <div className="text-xs"><span className="text-neg">Complaints: </span>{c.complaints}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      {b.news.length > 0 && (
+        <div>
+          <div className="text-xs text-muted uppercase tracking-wide mb-2 flex items-center gap-1.5"><Newspaper size={12} /> In the news</div>
+          <div className="space-y-2">
+            {b.news.map(n => (
+              <div key={n.headline} className="card p-3">
+                <div className="flex items-start gap-2">
+                  <div className="font-medium flex-1">{n.url ? <a href={n.url} target="_blank" rel="noreferrer" className="hover:underline">{n.headline}</a> : n.headline}</div>
+                  <span className="chip shrink-0" style={{ borderColor: n.tone === 'positive' ? '#3ddc97' : n.tone === 'negative' ? '#ff6b6b' : undefined, color: n.tone === 'positive' ? '#3ddc97' : n.tone === 'negative' ? '#ff6b6b' : undefined }}>{n.tone}</span>
+                </div>
+                <div className="text-xs text-muted mt-0.5">{n.source} · {n.date}</div>
+                <div className="text-xs mt-1">{n.gist}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {(b.buyerComplaints.length > 0 || b.substitutes.length > 0) && (
+        <div className="grid sm:grid-cols-2 gap-3">
+          {b.buyerComplaints.length > 0 && <div><div className="text-xs text-muted uppercase tracking-wide mb-1.5">What buyers complain about</div><div className="flex flex-wrap gap-1.5">{b.buyerComplaints.map(x => <span key={x} className="chip">{x}</span>)}</div></div>}
+          {b.substitutes.length > 0 && <div><div className="text-xs text-muted uppercase tracking-wide mb-1.5">What people do instead</div><div className="flex flex-wrap gap-1.5">{b.substitutes.map(x => <span key={x} className="chip">{x}</span>)}</div></div>}
+        </div>
+      )}
+      {b.sources.length > 0 && (
+        <details className="text-xs text-muted">
+          <summary className="cursor-pointer">Sources ({b.sources.length})</summary>
+          <ul className="mt-1.5 space-y-0.5 pl-4 list-disc">{b.sources.map(s => <li key={s.url}><a href={s.url} target="_blank" rel="noreferrer" className="hover:underline">{s.title || s.url}</a></li>)}</ul>
+        </details>
+      )}
     </div>
   )
 }
@@ -57,8 +146,8 @@ function Feed({ onSelect }: { onSelect: (agentId: number) => void }) {
   }, [posts, postOrder])
 
   const ql = q.trim().toLowerCase()
+  const matches = useMemo(() => (p: AppPost) => !ql || p.text.toLowerCase().includes(ql) || (personas[p.agentId]?.name.toLowerCase().includes(ql) ?? false), [ql, personas])
   const visible = useMemo(() => {
-    const matches = (p: AppPost) => !ql || p.text.toLowerCase().includes(ql) || (personas[p.agentId]?.name.toLowerCase().includes(ql) ?? false)
     const out = threads.filter(th => {
       const a = personas[th.root.agentId]
       if (group !== 'all' && a?.professionGroup !== group) return false
@@ -68,7 +157,7 @@ function Feed({ onSelect }: { onSelect: (agentId: number) => void }) {
     })
     out.sort(sort === 'latest' ? (a, b) => b.last - a.last : (a, b) => b.engagement - a.engagement || b.last - a.last)
     return out
-  }, [threads, personas, group, round, stance, ql, sort])
+  }, [threads, personas, group, round, stance, matches, sort])
 
   return (
     <>
@@ -105,7 +194,7 @@ function Feed({ onSelect }: { onSelect: (agentId: number) => void }) {
             {postOrder.length ? 'No posts match these filters.' : 'Nobody has posted yet. The app opens after first impressions.'}
           </div>
         )}
-        {visible.slice(0, limit).map(th => <ThreadView key={th.root.id} th={th} personas={personas} onSelect={onSelect} />)}
+        {visible.slice(0, limit).map(th => <ThreadView key={th.root.id} th={th} personas={personas} onSelect={onSelect} match={ql ? matches : null} />)}
         {visible.length > limit && (
           <button className="btn btn-ghost w-full justify-center text-xs" onClick={() => setLimit(l => l + PAGE)}>
             Show more ({(visible.length - limit).toLocaleString()} more threads)
@@ -116,9 +205,11 @@ function Feed({ onSelect }: { onSelect: (agentId: number) => void }) {
   )
 }
 
-function ThreadView({ th, personas, onSelect }: { th: Thread; personas: Persona[]; onSelect: (id: number) => void }) {
+function ThreadView({ th, personas, onSelect, match }: { th: Thread; personas: Persona[]; onSelect: (id: number) => void; match: ((p: AppPost) => boolean) | null }) {
   const [open, setOpen] = useState(false)
-  const shown = open ? th.replies : th.replies.slice(0, 2)
+  // While searching, surface the replies that match instead of the first two.
+  const shown = open ? th.replies : match ? th.replies.filter(match).slice(0, 5) : th.replies.slice(0, 2)
+  const hidden = th.replies.length - shown.length
   return (
     <div className="card p-3 fade-in">
       <PostCard p={th.root} a={personas[th.root.agentId]} parent={null} onSelect={onSelect} />
@@ -128,9 +219,9 @@ function ThreadView({ th, personas, onSelect }: { th: Thread; personas: Persona[
             <PostCard key={r.id} p={r} a={personas[r.agentId]} onSelect={onSelect}
               parent={r.replyTo != null && r.replyTo !== th.root.id ? th.replies.find(x => x.id === r.replyTo) ?? null : null} personas={personas} small />
           ))}
-          {th.replies.length > 2 && (
+          {(open || hidden > 0) && (
             <button className="text-xs text-accent hover:underline" onClick={() => setOpen(o => !o)}>
-              {open ? 'Hide replies' : `Show ${th.replies.length - 2} more ${th.replies.length - 2 === 1 ? 'reply' : 'replies'}`}
+              {open ? 'Hide replies' : `Show ${hidden} more ${hidden === 1 ? 'reply' : 'replies'}`}
             </button>
           )}
         </div>

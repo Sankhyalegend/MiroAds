@@ -63,6 +63,8 @@ RESPONSE_STYLE = ["Gut reaction first, reasons later", "Weighs pros and cons out
                   "Pictures it in my own home or desk", "Looks for the catch", "Gets excited easily, cools down later", "Barely engages unless it is relevant to me"]
 BIGTECH = ["Pro big tech", "Neutral on big tech", "Anti big tech"]
 MOODS = ["rushed", "bored", "curious", "irritable", "upbeat", "tired", "focused", "distracted"]
+# Never drawn at random: only the news an agent saw in the market scan can put them in these (engine/market.py).
+NEWS_MOODS = ["wary", "excited"]
 
 FIRST = ["Aisha", "Ben", "Carla", "Dev", "Elena", "Farid", "Grace", "Hiro", "Ines", "Jonas", "Kavya", "Liam", "Maya", "Nikolai", "Olu", "Priya", "Quinn", "Rosa", "Sam", "Tariq", "Uma", "Victor", "Wen", "Xavier", "Yara", "Zoe", "Arjun", "Beatriz", "Chen", "Dana", "Emeka", "Freya", "Gabriel", "Hana", "Ivan", "Jade", "Kofi", "Lucia", "Mateo", "Noor", "Omar", "Pia", "Ravi", "Sofia", "Tomas", "Ulla", "Vikram", "Wei", "Yusuf", "Zara"]
 LAST = ["Okafor", "Müller", "Sato", "Rodriguez", "Patel", "Nguyen", "Kowalski", "Haddad", "Silva", "Andersen", "Ivanova", "Mensah", "Rossi", "Khan", "Oyelaran", "Whitfield", "Alvarez", "Hoffmann", "Kim", "Raman", "Dubois", "Tanaka", "Novak", "Baptiste", "Costa", "Lindqvist", "Adeyemi", "Sharma", "Castro", "Yilmaz", "Park", "Santos", "Fischer", "Ibrahim", "Moreau", "Das"]
@@ -150,7 +152,7 @@ def to_frontend_persona(agent_id: int, persona_id: int, sk: dict, profile: dict,
     }
 
 
-def persona_card(sk: dict, profile: dict, mood: str) -> str:
+def persona_card(sk: dict, profile: dict, mood: str, mood_reason: str = "") -> str:
     """Compact text card used in every prompt for this agent."""
     pp = "; ".join(f"{p.get('name')}: {p.get('verdict')}" for p in profile.get("past_products", [])[:2])
     return (
@@ -165,7 +167,7 @@ def persona_card(sk: dict, profile: dict, mood: str) -> str:
         f"Past products: {pp}.\n"
         f"How you evaluate things: {profile.get('evaluation_lens', '')}\n"
         f"Writing voice: {profile.get('voice', '')}\n"
-        f"Today you feel {mood}.\n"
+        f"Today you feel {mood}{f': {mood_reason}' if mood_reason else ''}.\n"
         f"You are a whole person, not a checklist: your taste, mood, situation and what moves you matter as much as your rules. "
         f"Some things you simply like or dislike without needing documents."
     )

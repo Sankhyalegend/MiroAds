@@ -12,6 +12,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 
 from ..llm import Meter, llm
 from .banks import DIMENSIONS
+from .market import market_summary
 from .stimulus import stimulus_block
 
 JUDGE_SCHEMA = {
@@ -22,11 +23,12 @@ JUDGE_SCHEMA = {
         "dimension_notes": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "score": {"type": "number", "minimum": 0, "maximum": 10}, "note": {"type": "string"}}, "required": ["name", "score", "note"], "additionalProperties": False}},
         "what_is_missing": {"type": "array", "items": {"type": "string"}, "minItems": 3, "maxItems": 6},
         "variants": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "object", "properties": {"label": {"type": "string"}, "change": {"type": "string"}, "predicted_delta": {"type": "number"}}, "required": ["label", "change", "predicted_delta"], "additionalProperties": False}},
+        "market_position": {"type": "string", "description": "2-3 sentences: how this stacks up against what is already on the market (from the market scan): price position, what would make people switch, which alternative it most has to beat. If no market scan was available, say so in one sentence."},
         "methodology_note": {"type": "string", "description": "2 sentences on what this simulation can and cannot tell the reader"},
         "limitations": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 4},
         "confidence_note": {"type": "string"},
     },
-    "required": ["verdict", "summary", "dimension_notes", "what_is_missing", "variants", "methodology_note", "limitations", "confidence_note"],
+    "required": ["verdict", "summary", "dimension_notes", "what_is_missing", "variants", "market_position", "methodology_note", "limitations", "confidence_note"],
     "additionalProperties": False,
 }
 
@@ -135,8 +137,9 @@ def compute_stats(agents: list[dict], verdicts: dict[int, dict], final: dict[int
     }
 
 
-def fake_judge(stats: dict, stype: str, rng: random.Random) -> dict:
+def fake_judge(stats: dict, stype: str, rng: random.Random, market: dict | None = None) -> dict:
     m = stats["mean"]
+    comps = (market or {}).get("competitors", [])
     dims = [{"name": d, "score": round(max(1, min(9.8, m + (rng.random() - .5) * 2.2)), 1), "note": "From crowd mean and objection mix."} for d, _ in DIMENSIONS[stype]]
     return {
         "verdict": "Strong: ship it, fix the gaps" if m >= 7 else "Promising but not there yet" if m >= 5.5 else "Weak: rework before spending on it" if m >= 4 else "Do not proceed as is",
@@ -148,13 +151,15 @@ def fake_judge(stats: dict, stype: str, rng: random.Random) -> dict:
         "variants": [{"label": f"Address the top objection directly: {stats['top_objection']}", "change": "Removes the most frequent blocker", "predicted_delta": 0.8},
                      {"label": "Lead with one measurable claim", "change": "Credibility", "predicted_delta": 0.5},
                      {"label": f"Speak to {stats['worst_segment'][0]} explicitly or drop them from targeting", "change": "Segment fit", "predicted_delta": 0.3}],
+        "market_position": (f"It enters a market where {comps[0]['name']} ({comps[0]['price']}) is the default and {comps[-1]['name']} ({comps[-1]['price']}) is the cheap way out; "
+                            f"at a crowd mean of {m:.1f} it has not yet shown why people should switch." if comps else "No market scan was available for this run."),
         "methodology_note": "A simulated crowd of AI personas is a structured pre-test: good at surfacing objections and segment differences, not a demand forecast. Treat deltas as directional.",
         "limitations": ["Personas share one underlying model; real crowds are noisier.", f"Per-segment n is small ({stats['n'] // 10} per profession group).", "No real purchase behaviour was observed."],
         "confidence_note": f"Agreement {stats['agreement']}% on n={stats['n']}.",
     }
 
 
-async def run_judge(stimulus: dict, stats: dict, experts: list[dict], composition: dict, meter: Meter, state: dict, cost_usd: float) -> dict:
+async def run_judge(stimulus: dict, stats: dict, experts: list[dict], composition: dict, meter: Meter, state: dict, cost_usd: float, market: dict | None = None) -> dict:
     L = llm()
     system = SYSTEM_TEMPLATE.format(stimulus=stimulus_block(stimulus))
     stype = stimulus["type"]
@@ -167,12 +172,12 @@ async def run_judge(stimulus: dict, stats: dict, experts: list[dict], compositio
             f"shift during discussion {stats['shift']:+.2f}, mind changes {stats['mind_changes']}, agreement {stats['agreement']}%.\n"
             f"Diversity check: median reaction similarity {stats['diversity']['reactionSimilarityMedian']}, distinct objections {stats['diversity']['distinctObjections']}, segment spread {stats['diversity']['segmentSpread']} ({stats['diversity']['verdict']}).\n"
             f"SEGMENTS:\n{seg}\nOBJECTIONS (clustered):\n{obj}\nMISSING (most cited): {', '.join(stats['missing'])}\nMOST DISCUSSED POSTS:\n{posts}\n\nRESEARCH TEAM FINDINGS:\n{exp}\n\n"
-            f"SAMPLE COMPOSITION: {composition}\n\nWrite the report fields. JSON only.")
+            f"SAMPLE COMPOSITION: {composition}\n\n{market_summary(market)}\n\nWrite the report fields. JSON only.")
     rng = random.Random(state["seed"] + 99)
     try:
-        out = await L.json(role="analyst", system=system, user=user, schema=JUDGE_SCHEMA, meter=meter, fake=lambda: fake_judge(stats, stype, rng), max_tokens=8000, effort="medium")
+        out = await L.json(role="analyst", system=system, user=user, schema=JUDGE_SCHEMA, meter=meter, fake=lambda: fake_judge(stats, stype, rng, market), max_tokens=8000, effort="medium")
     except Exception as e:
-        out = fake_judge(stats, stype, rng) | {"_error": str(e)[:160]}
+        out = fake_judge(stats, stype, rng, market) | {"_error": str(e)[:160]}
 
     weights = dict(DIMENSIONS[stype])
     dim_scores = [{"name": d["name"], "score": float(d["score"]), "weight": weights.get(d["name"], 0.1), "note": d["note"]} for d in out["dimension_notes"] if d["name"] in weights]
@@ -201,6 +206,7 @@ async def run_judge(stimulus: dict, stats: dict, experts: list[dict], compositio
 
     return {
         "overall": overall, "crowdMean": crowd_mean, "analystScore": analyst_score, "verdict": out["verdict"], "summary": out["summary"],
+        "marketPosition": out.get("market_position", ""),
         "dimensions": dim_scores, "segments": stats["segments"], "objections": stats["objections"], "missing": out["what_is_missing"],
         "missingKpis": kpis[:8], "variants": [{"label": v["label"], "change": v["change"], "predictedDelta": round(float(v["predicted_delta"]), 1)} for v in out["variants"]],
         "polarization": round(stats["sd"], 2), "shift": round(stats["shift"], 2),

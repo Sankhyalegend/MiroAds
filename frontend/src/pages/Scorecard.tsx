@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, RotateCcw, Download, AlertTriangle, Target, FlaskConical, Quote, Microscope, Users } from 'lucide-react'
+import { ArrowLeft, RotateCcw, Download, AlertTriangle, Target, FlaskConical, Quote, Microscope, Users, Store } from 'lucide-react'
 import { useStore } from '../store'
 import { api } from '../api'
+import type { Research } from '../types'
 
 const col = (s: number) => s >= 7 ? '#3ddc97' : s >= 5 ? '#f5c242' : '#ff6b6b'
 
 export default function Scorecard() {
   const nav = useNavigate()
   const { id } = useParams()
-  const { scorecard: storeSc, stimulus: storeStim, reset, loadRun, runId } = useStore()
+  const { scorecard: storeSc, stimulus: storeStim, reset, loadRun, runId, market: storeMarket } = useStore()
   const [group, setGroup] = useState('Profession')
   const [loaded, setLoaded] = useState<{ sc: typeof storeSc; stim: typeof storeStim } | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -29,6 +30,9 @@ export default function Scorecard() {
   const groups = [...new Set(sc.segments.map(s => s.group))]
   const segs = sc.segments.filter(s => s.group === group)
   const R = sc.research
+  // Live reports carry the scan in research.market; the mock engine only streams it as an event.
+  const mk: Research['market'] | null = R?.market
+    ?? (storeMarket ? { status: storeMarket.status, reason: storeMarket.reason, moodShifts: storeMarket.moodShifts, ...storeMarket.brief } : null)
   const download = () => {
     const blob = new Blob([JSON.stringify({ stimulus, scorecard: sc }, null, 2)], { type: 'application/json' })
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `scorecard-${stimulus.title.replace(/\W+/g, '-')}.json`; a.click()
@@ -147,6 +151,40 @@ export default function Scorecard() {
           </div>
         </div>
       </div>
+
+      {mk && mk.status !== 'off' && (
+        <div className="grid md:grid-cols-2 gap-5">
+          <div className="card p-5">
+            <h2 className="font-semibold mb-3 flex items-center gap-2"><Store size={16} className="text-accent" /> Market context
+              <span className="text-xs text-muted font-normal">{mk.status === 'simulated' ? 'simulated, not real market data' : mk.status === 'ok' ? mk.category : 'scan unavailable'}</span></h2>
+            {sc.marketPosition && <p className="text-sm leading-relaxed mb-3">{sc.marketPosition}</p>}
+            {mk.status === 'unavailable' ? <div className="text-sm text-muted">The agents judged it without knowing the alternatives: {mk.reason}</div> : (
+              <>
+                {mk.priceRange && <div className="text-xs text-muted mb-2">Price range: <b className="text-text">{mk.priceRange}</b></div>}
+                <div className="space-y-1.5">
+                  {(mk.competitors ?? []).map(c => (
+                    <div key={c.name} className="flex justify-between gap-3 text-sm">
+                      <span className="truncate">{c.url ? <a href={c.url} target="_blank" rel="noreferrer" className="hover:underline">{c.name}</a> : c.name} <span className="text-xs text-muted">{c.maker}</span></span>
+                      <span className="text-accent font-semibold shrink-0">{c.price}</span>
+                    </div>
+                  ))}
+                </div>
+                {(mk.news?.length ?? 0) > 0 && (
+                  <>
+                    <div className="text-xs text-muted uppercase tracking-wide mt-3 mb-1">In the news</div>
+                    {mk.news!.slice(0, 4).map(n => (
+                      <div key={n.headline} className="text-xs mt-1">
+                        <span style={{ color: n.tone === 'positive' ? '#3ddc97' : n.tone === 'negative' ? '#ff6b6b' : '#8b96ad' }}>●</span> {n.headline} <span className="text-muted">({n.source}, {n.date})</span>
+                      </div>
+                    ))}
+                  </>
+                )}
+                {mk.moodShifts && (mk.moodShifts.wary || mk.moodShifts.excited) ? <div className="text-xs text-muted mt-2">The news made {mk.moodShifts.wary ?? 0} agents wary and {mk.moodShifts.excited ?? 0} excited before they judged it.</div> : null}
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {R && (
         <div className="card p-5 space-y-4">

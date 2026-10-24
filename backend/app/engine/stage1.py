@@ -9,6 +9,7 @@ from ..llm import Meter, llm
 from ..personas.frame import persona_card
 from .banks import MISSING, OBJECTIONS, PRAISE
 from .events import bus
+from .market import market_block
 from .stimulus import stimulus_block
 
 VERDICT_SCHEMA = {
@@ -75,6 +76,10 @@ def fake_verdict(agent: dict, stype: str, rng: random.Random) -> dict:
         a -= 0.05
     if agent["mood"] in ("curious", "upbeat"):
         a += 0.04
+    if agent["mood"] == "wary":
+        a -= 0.07
+    if agent["mood"] == "excited":
+        a += 0.06
     if stype == "idea" and (agent["professionGroup"] == "Finance" or agent["role"] in ("Investor", "Gatekeeper")):
         a -= 0.1
     if stype == "creative" and agent["professionGroup"] == "Design":
@@ -107,8 +112,8 @@ async def run_stage1(run_id: str, stimulus: dict, agents: list[dict], meter: Met
     async def one(agent: dict):
         if state.get("stopped"):
             return
-        card = persona_card(agent["_sk"], agent["_profile"], agent["mood"])
-        user = f"{card}\n\nYou see the stimulus above for the first time. Give your first impression as JSON."
+        card = persona_card(agent["_sk"], agent["_profile"], agent["mood"], agent.get("_mood_reason", ""))
+        user = f"{card}{market_block(agent)}\n\nYou see the stimulus above for the first time. Give your first impression as JSON."
         local_rng = random.Random(rng.random())
         try:
             v = await L.json(role="crowd", system=system, user=user, schema=VERDICT_SCHEMA, meter=meter, fake=lambda: fake_verdict(agent, stype, local_rng), max_tokens=900)

@@ -9,6 +9,7 @@ import { GROUP_COLORS, hexToCss } from '../mock/personas'
 import type { Stage } from '../types'
 
 const STAGES: { id: Stage; label: string }[] = [
+  { id: 'market', label: 'Market scan' },
   { id: 'impressions', label: 'First impressions' },
   { id: 'social', label: 'Social rounds' },
   { id: 'experts', label: 'Research team' },
@@ -25,6 +26,7 @@ export default function Run() {
   const [net, setNet] = useState({ edges: 0, crossCluster: 0 })
   const [selected, setSelected] = useState<number | null>(null)
   const [view, setView] = useState<'network' | 'app'>('network')
+  const wide = useIsWide()
   const [loadErr, setLoadErr] = useState<string | null>(null)
   const feedRef = useRef<HTMLDivElement>(null)
 
@@ -113,6 +115,15 @@ export default function Run() {
         </div>
       </div>
 
+      {/* Below the lg breakpoint the side column is hidden, so a selected agent opens as an overlay instead. */}
+      {!wide && selected != null && personas[selected] && (
+        <div className="fixed inset-0 z-40 bg-black/60 p-4 overflow-y-auto" onClick={() => setSelected(null)}>
+          <div className="max-w-md mx-auto" onClick={e => e.stopPropagation()}>
+            <AgentPanel runId={engine === 'live' ? runId : null} persona={personas[selected]} onClose={() => setSelected(null)} />
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-col gap-3 min-h-0 min-w-0 max-lg:hidden">
         <div className="card p-4 grid grid-cols-3 gap-3 text-center">
           <Stat icon={<Eye size={14} />} label="Reacted" value={counters.impressions} />
@@ -126,7 +137,7 @@ export default function Run() {
           {engine === 'live' ? <Stat icon={<DollarSign size={14} />} label="Cost so far" value={`$${costUsd.toFixed(3)}`} /> : <Stat label="Crowd" value={personas.length.toLocaleString()} />}
         </div>
 
-        {selected != null && personas[selected] ? (
+        {wide && selected != null && personas[selected] ? (
           <div className="flex-1 min-h-0 overflow-y-auto">
             <AgentPanel runId={engine === 'live' ? runId : null} persona={personas[selected]} onClose={() => setSelected(null)} />
           </div>
@@ -164,6 +175,19 @@ export default function Run() {
       </div>
     </div>
   )
+}
+
+/** True at Tailwind's lg breakpoint and up, where the side column (stats, feed, agent panel) is visible. */
+function useIsWide() {
+  const query = '(min-width: 1024px)'
+  const [wide, setWide] = useState(() => window.matchMedia(query).matches)
+  useEffect(() => {
+    const m = window.matchMedia(query)
+    const on = () => setWide(m.matches)
+    m.addEventListener('change', on)
+    return () => m.removeEventListener('change', on)
+  }, [])
+  return wide
 }
 
 function Stat({ icon, label, value, accent }: { icon?: React.ReactNode; label: string; value: number | string; accent?: string }) {
