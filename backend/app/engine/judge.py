@@ -423,6 +423,34 @@ def interview_summary(stats: dict) -> str:
             f"What they concluded (grouped):\n{themes}\nWhat would win the non-buyers over: {fixes}")
 
 
+def _margins(cols: dict[str, list[float]], n_boot: int = 1000) -> dict[str, list[float]]:
+    """95% intervals from resampling the crowd: where each number would likely land with another crowd of the same size
+    from the same village. Says nothing about how far the simulation is from real people."""
+    rng = np.random.default_rng(0)
+    out = {}
+    for k, xs in cols.items():
+        if len(xs) < 10:
+            continue
+        x = np.asarray(xs, dtype=float)
+        means = x[rng.integers(0, len(x), size=(n_boot, len(x)))].mean(axis=1)
+        lo, hi = np.percentile(means, [2.5, 97.5])
+        out[k] = [round(float(lo), 1), round(float(hi), 1)]
+    return out
+
+
+def _margin_cols(agents: list[dict], verdicts: dict[int, dict], fs: np.ndarray, stated: list[str], interviews: dict[int, dict]) -> dict[str, list[float]]:
+    """Per-person values whose means are the headline numbers (percentages as 0 or 100)."""
+    vs = [verdicts.get(a["id"]) or {} for a in agents]
+    ivs = [interviews[a["id"]] for a in agents if a["id"] in interviews]
+    return {
+        "score": list(fs), "buy": [100.0 * (s == "Would buy/use") for s in stated],
+        "stop": [100.0 * bool(v["noticed"]) for v in vs if "noticed" in v],
+        "click": [100.0 * (v.get("would_click") == "Yes") for v in vs if "would_click" in v],
+        "likelihood": [float(iv["likelihood"]) for iv in ivs if "likelihood" in iv],
+        "nps": [100.0 if iv["recommend"] >= 9 else -100.0 if iv["recommend"] <= 6 else 0.0 for iv in ivs],
+    }
+
+
 def compute_stats(agents: list[dict], verdicts: dict[int, dict], final: dict[int, float], mind_changes: int, posts: list[dict],
                   interviews: dict[int, dict] | None = None, price: str | None = None) -> dict:
     """`price` is the price the crowd saw (interview.price_shown), for the price test."""
@@ -495,6 +523,7 @@ def compute_stats(agents: list[dict], verdicts: dict[int, dict], final: dict[int
     agreement = round(max(0.0, 1 - sd / 3.2) * 100)
     return {
         "n": n, "mean": mean, "sd": sd, "intent": intent, "intent_source": intent_source, "interviews": _interview_stats(agents, interviews, price), "attention": attention,
+        "margins": _margins(_margin_cols(agents, verdicts, fs, stated, interviews)),
         "shift": float(fs.mean() - init.mean()), "mind_changes": mind_changes,
         "segments": segments, "objections": objections, "missing": missing, "top_objection": objections[0]["text"] if objections else "none",
         "best_segment": best, "worst_segment": worst, "agreement": agreement,
@@ -535,8 +564,10 @@ async def run_judge(stimulus: dict, stats: dict, experts: list[dict], compositio
     obj = "\n".join(f"  {o['count']}x (influence {o['influence']:.1f}): {o['text']} — e.g. {o['quotes'][0]['agent'] if o['quotes'] else ''}" for o in stats["objections"])
     exp = "\n".join(f"  [{e['name']}] {e['headline']}\n" + "\n".join(f"     - ({f['type']}) {f['title']}: {f['detail']}" for f in e.get("findings", [])) for e in experts)
     posts = "\n".join(f"  - {p['author']} ({p['profession']}): \"{p['text']}\" [{p['replies']} replies/{p['reposts']} reposts/{p.get('likes', 0)} likes]" for p in stats["top_posts"][:12])
+    margins = "; ".join(f"{k} {lo}-{hi}" for k, (lo, hi) in stats.get("margins", {}).items())
     user = (f"DIMENSIONS TO SCORE: {dims}\n\nCROWD RESULTS (n={stats['n']}): mean {stats['mean']:.2f}, sd {stats['sd']:.2f}, intent buy/maybe/no {stats['intent']['buy']}/{stats['intent']['maybe']}/{stats['intent']['no']}% (stated, from {stats['intent_source']}), "
             f"shift during discussion {stats['shift']:+.2f}, mind changes {stats['mind_changes']}, agreement {stats['agreement']}%.\n"
+            f"95% intervals from resampling this crowd (another crowd of this size would likely land here; percentages for buy/stop/click): {margins or 'n/a'}.\n"
             f"Diversity check: median reaction similarity {stats['diversity']['reactionSimilarityMedian']}, distinct objections {stats['diversity']['distinctObjections']}, segment spread {stats['diversity']['segmentSpread']} ({stats['diversity']['verdict']}).\n"
             f"SEGMENTS:\n{seg}\nOBJECTIONS (clustered):\n{obj}\nMISSING (most cited): {', '.join(stats['missing'])}\nMOST DISCUSSED POSTS:\n{posts}\n\nRESEARCH TEAM FINDINGS:\n{exp}\n\n"
             f"SAMPLE COMPOSITION: {composition}\n\n{market_summary(market)}\n\n{interview_summary(stats)}\n\n{attention_summary(stats)}\n\nWrite the report fields. JSON only.")
@@ -579,6 +610,7 @@ async def run_judge(stimulus: dict, stats: dict, experts: list[dict], compositio
         "polarization": round(stats["sd"], 2), "shift": round(stats["shift"], 2),
         "confidence": {"sample": n, "agreement": stats["agreement"], "label": label, "note": out["confidence_note"] + f" Diversity: {stats['diversity']['verdict']}."},
         "intentSplit": stats["intent"], "intentSource": stats["intent_source"], "interviews": stats["interviews"], "attention": stats["attention"],
+        "margins": stats.get("margins", {}),
         "research": {
             "methodology": out["methodology_note"], "limitations": out["limitations"], "team": experts, "otherFindings": others[:12],
             "composition": composition, "diversity": stats["diversity"], "topPosts": stats["top_posts"][:10], "mindChanges": stats["mind_changes"],

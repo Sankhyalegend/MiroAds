@@ -249,4 +249,6 @@ export interface Scorecard {
   intentSource?: string
   interviews?: InterviewSummary | null
   attention?: Attention | null
+  /** 95% ranges from resampling the crowd: score and likelihood in points, buy/stop/click in %, NPS. */
+  margins?: Partial<Record<'score' | 'buy' | 'stop' | 'click' | 'likelihood' | 'nps', [number, number]>>
 }

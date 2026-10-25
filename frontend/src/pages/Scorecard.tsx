@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, RotateCcw, Download, AlertTriangle, Target, FlaskConical, Quote, Microscope, Users, Store, Mic, Eye, FileText, MousePointerClick, ShoppingCart, GitBranch, ArrowLeftRight } from 'lucide-react'
 import { useStore } from '../store'
 import { api } from '../api'
-import type { Attention, InterviewSummary, PriceTest, Research, Stimulus } from '../types'
+import type { Attention, InterviewSummary, PriceTest, Research, Scorecard as ScorecardData, Stimulus } from '../types'
 
 const col = (s: number) => s >= 7 ? '#3ddc97' : s >= 5 ? '#f5c242' : '#ff6b6b'
 
@@ -66,14 +66,14 @@ export default function Scorecard() {
           <Gauge value={sc.overall} />
           <div className="mt-2 font-semibold" style={{ color: col(sc.overall) }}>{sc.verdict}</div>
           {sc.crowdMean != null && sc.analystScore != null && (
-            <div className="text-xs text-muted mt-1">Crowd mean <b className="text-text">{sc.crowdMean.toFixed(1)}</b> · research team <b className="text-text">{sc.analystScore.toFixed(1)}</b></div>
+            <div className="text-xs text-muted mt-1">Crowd mean <b className="text-text">{sc.crowdMean.toFixed(1)}</b>{sc.margins?.score ? ` (${rangeText(sc.margins.score, 'pts')})` : ''} · research team <b className="text-text">{sc.analystScore.toFixed(1)}</b></div>
           )}
           <div className="text-xs text-muted mt-1">Confidence: {sc.confidence.label} · {sc.confidence.sample.toLocaleString()} agents · {sc.confidence.agreement}% agreement</div>
         </div>
         <div className="card p-5 space-y-3">
           <p className="leading-relaxed">{sc.summary}</p>
           <div className="grid grid-cols-3 gap-3 text-center">
-            <Mini label="Would buy / back" value={`${sc.intentSplit.buy}%`} c="#3ddc97" />
+            <Mini label="Would buy / back" value={`${sc.intentSplit.buy}%`} c="#3ddc97" range={rangeText(sc.margins?.buy, 'pct')} />
             <Mini label="On the fence" value={`${sc.intentSplit.maybe}%`} c="#f5c242" />
             <Mini label="Would not" value={`${sc.intentSplit.no}%`} c="#ff6b6b" />
           </div>
@@ -88,8 +88,8 @@ export default function Scorecard() {
         </div>
       </div>
 
-      {sc.attention && <AttentionCard at={sc.attention} />}
-      {sc.interviews?.likelihood && <BuyingCard iv={sc.interviews} />}
+      {sc.attention && <AttentionCard at={sc.attention} margins={sc.margins} />}
+      {sc.interviews?.likelihood && <BuyingCard iv={sc.interviews} margins={sc.margins} />}
 
       <details className="card p-5">
         <summary className="cursor-pointer font-semibold flex flex-wrap items-center gap-2 list-none">
@@ -203,7 +203,7 @@ export default function Scorecard() {
 
       {(sc.interviews || (mk && mk.status !== 'off')) && (
         <div className="grid md:grid-cols-2 gap-5">
-          {sc.interviews && <Concluded iv={sc.interviews} />}
+          {sc.interviews && <Concluded iv={sc.interviews} margins={sc.margins} />}
           {mk && mk.status !== 'off' && <div className="card p-5">
             <h2 className="font-semibold mb-3 flex items-center gap-2"><Store size={16} className="text-accent" /> Market context
               <span className="text-xs text-muted font-normal">{mk.status === 'simulated' ? 'simulated, not real market data' : mk.status === 'ok' ? mk.category : 'scan unavailable'}</span></h2>
@@ -298,7 +298,7 @@ function Gauge({ value }: { value: number }) {
 }
 
 /** First impressions where each person really meets it: did they stop, what did they take in, would they click. */
-function AttentionCard({ at }: { at: Attention }) {
+function AttentionCard({ at, margins }: { at: Attention; margins?: ScorecardData['margins'] }) {
   const top = Math.max(1, ...at.byPlacement.map(p => p.stopRate))
   return (
     <div className="card p-5">
@@ -307,8 +307,8 @@ function AttentionCard({ at }: { at: Attention }) {
       <div className="grid md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-5">
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-2 text-center">
-            <Mini label="Would stop scrolling" value={`${at.stopRate}%`} c={at.stopRate >= 30 ? '#3ddc97' : at.stopRate >= 15 ? '#f5c242' : '#ff6b6b'} />
-            <Mini label={`Would click (+${at.click.maybe}% maybe)`} value={`${at.click.yes}%`} c={at.click.yes >= 10 ? '#3ddc97' : at.click.yes >= 4 ? '#f5c242' : '#ff6b6b'} />
+            <Mini label="Would stop scrolling" value={`${at.stopRate}%`} c={at.stopRate >= 30 ? '#3ddc97' : at.stopRate >= 15 ? '#f5c242' : '#ff6b6b'} range={rangeText(margins?.stop, 'pct')} />
+            <Mini label={`Would click (+${at.click.maybe}% maybe)`} value={`${at.click.yes}%`} c={at.click.yes >= 10 ? '#3ddc97' : at.click.yes >= 4 ? '#f5c242' : '#ff6b6b'} range={rangeText(margins?.click, 'pct')} />
           </div>
           {at.glance.length > 0 && (
             <div>
@@ -346,7 +346,7 @@ function AttentionCard({ at }: { at: Attention }) {
 const LIKELIHOOD_BINS = ['0', '1-2', '3-4', '5', '6-7', '8-9', '10']
 
 /** Purchase likelihood, choice share and the price test from the exit interviews. */
-function BuyingCard({ iv }: { iv: InterviewSummary }) {
+function BuyingCard({ iv, margins }: { iv: InterviewSummary; margins?: ScorecardData['margins'] }) {
   const lk = iv.likelihood!, ch = iv.choice, pr = iv.price
   const peak = Math.max(1, ...lk.dist)
   return (
@@ -356,7 +356,7 @@ function BuyingCard({ iv }: { iv: InterviewSummary }) {
       <div className="grid md:grid-cols-3 gap-5">
         <div>
           <div className="grid grid-cols-2 gap-2 text-center">
-            <Mini label="Likelihood to buy (0-10)" value={lk.mean.toFixed(1)} c={lk.mean >= 6 ? '#3ddc97' : lk.mean >= 4 ? '#f5c242' : '#ff6b6b'} />
+            <Mini label="Likelihood to buy (0-10)" value={lk.mean.toFixed(1)} c={lk.mean >= 6 ? '#3ddc97' : lk.mean >= 4 ? '#f5c242' : '#ff6b6b'} range={rangeText(margins?.likelihood, 'pts')} />
             <Mini label="Expected buyers, as stated" value={`${lk.expectedBuyers}%`} c="#e6ebf5" />
           </div>
           <div className="flex items-end gap-1 h-14 mt-3">
@@ -413,13 +413,13 @@ function PriceRange({ pr }: { pr: PriceTest }) {
 }
 
 /** Exit interviews: what the crowd concluded once the discussion was over. */
-function Concluded({ iv }: { iv: InterviewSummary }) {
+function Concluded({ iv, margins }: { iv: InterviewSummary; margins?: ScorecardData['margins'] }) {
   const v = iv.vsAlternatives
   return (
     <div className="card p-5">
       <h2 className="font-semibold mb-3 flex items-center gap-2"><Mic size={16} className="text-pos" /> What the crowd concluded <span className="text-xs text-muted font-normal">exit interviews · {iv.n.toLocaleString()} agents</span></h2>
       <div className="grid grid-cols-3 gap-2 text-center mb-3">
-        <Mini label="NPS (recommend 9-10 minus 0-6)" value={`${iv.nps > 0 ? '+' : ''}${iv.nps}`} c={iv.nps >= 0 ? '#3ddc97' : '#ff6b6b'} />
+        <Mini label="NPS (recommend 9-10 minus 0-6)" value={`${iv.nps > 0 ? '+' : ''}${iv.nps}`} c={iv.nps >= 0 ? '#3ddc97' : '#ff6b6b'} range={rangeText(margins?.nps, 'int')} />
         <Mini label="Changed mind: up / down" value={`${iv.changedMind.positive}% / ${iv.changedMind.negative}%`} c="#e6ebf5" />
         <Mini label="Say it beats what they use" value={`${v.better}%`} c={v.better >= v.worse ? '#3ddc97' : '#f5c242'} />
       </div>
@@ -448,6 +448,18 @@ function Concluded({ iv }: { iv: InterviewSummary }) {
   )
 }
 
-function Mini({ label, value, c }: { label: string; value: string; c: string }) {
-  return <div className="bg-panel-2 rounded-lg p-3"><div className="text-xl font-bold" style={{ color: c }}>{value}</div><div className="text-xs text-muted">{label}</div></div>
+/** "95%: 3.9–4.6" for a range from resampling the crowd: points to one decimal, percentages and NPS whole. */
+function rangeText(r: [number, number] | undefined, kind: 'pts' | 'pct' | 'int'): string | undefined {
+  if (!r) return undefined
+  const f = (x: number) => kind === 'pts' ? x.toFixed(1) : String(Math.round(x))
+  return `95%: ${f(r[0])}–${f(r[1])}${kind === 'pct' ? '%' : ''}`
+}
+
+function Mini({ label, value, c, range }: { label: string; value: string; c: string; range?: string }) {
+  return (
+    <div className="bg-panel-2 rounded-lg p-3">
+      <div className="text-xl font-bold" style={{ color: c }}>{value}</div><div className="text-xs text-muted">{label}</div>
+      {range && <div className="text-[10px] text-muted opacity-80" title="Where this would likely land with another crowd of the same size from the village">{range}</div>}
+    </div>
+  )
 }

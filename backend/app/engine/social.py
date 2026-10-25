@@ -20,22 +20,26 @@ ACTION_SCHEMA = {
     "type": "object",
     "properties": {
         "action": {"type": "string", "enum": ["nothing", "like", "repost", "reply", "post"],
-                   "description": "What you do on this visit. On a real feed most visits end in 'nothing' (read and move on) or a 'like'."},
+                   "description": "What you do on this visit. On a real feed most visits end in 'nothing' (read and move on) or a 'like'; "
+                                  "now and then a post is worth passing on to your own followers ('repost')."},
         "target_post_id": {"type": "integer", "description": "Required for like/repost/reply: the id of the feed post you respond to; 0 otherwise"},
+        "pass_on": {"type": "boolean", "description": "Would you also pass that post on: repost it to your followers or send it to a friend? Only when it's genuinely "
+                                                      "worth passing on (useful, funny, surprising, or a warning); on a real feed that's about one in ten of the posts people like."},
         "text": {"type": "string", "description": "Only for reply or post: what you write, in your voice, 1-2 sentences, under 40 words, like a real social post: casual, can be emotional, funny, or a question. No numbered lists unless that is truly your voice. Empty for nothing/like/repost."},
         "new_score": {"type": "number", "description": "Your 0-10 score now. Most people keep their score. Change it only because one specific post in this feed gave you a reason you did not already have, in either direction. A point you already knew, repeated by more people, is not a new reason."},
         "moved_by_post_id": {"type": "integer", "description": "If your score changed, the id of the feed post that changed it. 0 if your score did not change."},
         "why": {"type": "string", "description": "One sentence on why you acted this way and whether your score moved"},
     },
-    "required": ["action", "target_post_id", "text", "new_score", "moved_by_post_id", "why"],
+    "required": ["action", "target_post_id", "pass_on", "text", "new_score", "moved_by_post_id", "why"],
     "additionalProperties": False,
 }
 # A visit on which this person is only scrolling: they can like, repost or move on, but not write.
 READ_SCHEMA = copy.deepcopy(ACTION_SCHEMA)
-READ_SCHEMA["properties"]["action"] = {"type": "string", "enum": ["nothing", "like", "repost"], "description": "What you do on this visit: move on, like a post, or repost it."}
+READ_SCHEMA["properties"]["action"] = {"type": "string", "enum": ["nothing", "like", "repost"],
+                                       "description": "What you do on this visit: move on, like a post, or repost it to pass it on to your own followers."}
 READ_SCHEMA["properties"]["text"] = {"type": "string", "description": "Always empty on this visit."}
 
-SYSTEM_TEMPLATE = """You are role-playing one specific real person opening a social app where people are discussing a new thing. Stay fully in character and behave the way people really use these apps: most visits end with reading and moving on, or a like. A typical thread gets many likes for every reply, and most readers never write anything. Write only when you have something specific the feed doesn't already have (your own experience, a new angle, a joke, a direct question to someone), or when a post hits a nerve hard enough that you can't resist. Agreeing is a like; agreeing so strongly that you want your own followers to see it is a repost; "same here", "this!" or restating a point already made is never worth a reply. Your posting habit, given with your profile, says how often someone like you writes at all. When you do write, write like a real person on social media: short, in your own voice, sometimes emotional, funny, tangential or blunt. Disagreement is normal; so is enthusiasm.
+SYSTEM_TEMPLATE = """You are role-playing one specific real person opening a social app where people are discussing a new thing. Stay fully in character and behave the way people really use these apps: most visits end with reading and moving on, or a like. A typical thread gets many likes for every reply, and most readers never write anything. Write only when you have something specific the feed doesn't already have (your own experience, a new angle, a joke, a direct question to someone), or when a post hits a nerve hard enough that you can't resist. Agreeing is a like. A repost passes a post on to your own followers or friends, which people do when it's worth sharing: useful, funny, surprising, something they should see, or something to warn them about; real feeds see roughly one repost for every ten likes. "Same here", "this!" or restating a point already made is never worth a reply. Your posting habit, given with your profile, says how often someone like you writes at all. When you do write, write like a real person on social media: short, in your own voice, sometimes emotional, funny, tangential or blunt. Disagreement is normal; so is enthusiasm.
 How opinions actually move: most people finish a thread with the opinion they started with. When someone does change their mind, it is because one specific post gave them a reason they had not considered, and that can push them up (a use case they hadn't pictured, a good experience someone had, a rebuttal of a worry) just as easily as down (a flaw they missed). Seeing the same complaint or the same unanswered question again is not new information and does not make the thing worse than it already seemed to you. Nobody in this feed speaks for the company, so unanswered questions are expected. If the thread has been noise, you can drift back toward your own first impression.
 
 {stimulus}
@@ -99,6 +103,10 @@ _HABITS = ("you almost never post or reply online; you read, and now and then yo
 # Share of visits on which each habit gets to write at all. Asked per call, the model can't keep track of how often
 # someone like this writes: in a live run it replied on 97% of visits even when told it rarely posts.
 WRITE_CHANCE = (0.1, 0.35, 0.7)
+# Share of visits on which each habit is in the mood to pass something on. The opposite problem: asked per call, the
+# model never reposted (0 of 288 replayed visits, whether offered as an action or as its own yes/no question; 1 of 144
+# with this, on a lukewarm poster).
+SHARE_CHANCE = (0.08, 0.15, 0.25)
 
 
 def posting_habit(agent: dict) -> str:
@@ -198,6 +206,10 @@ async def run_social(run_id: str, stimulus: dict, agents: list[dict], verdicts: 
             # stream so the visits drawn each round don't change). On other visits they can only like, repost or move on.
             may_write = random.Random(f"{state['seed']}:{r}:{agent['id']}").random() < write_chance(agent)
             scrolling = "" if may_write else "This visit you're only scrolling: you won't write anything, but you can like or repost a post, or just move on.\n"
+            # The model still decides whether anything here deserves passing on; the habit only says when they're in the mood.
+            if random.Random(f"{state['seed']}:{r}:{agent['id']}:share").random() < SHARE_CHANCE[_habit(agent)]:
+                scrolling += ("This visit you're in the mood to pass something on: if one of these posts is worth sending to your followers or a friend "
+                              "(useful, funny, surprising, or a warning), set pass_on for it; if none is, leave pass_on false and do what you'd normally do.\n")
             user = (f"{persona_card(agent['_sk'], agent['_profile'], agent['mood'], agent.get('_mood_reason', ''))}{market_block(agent)}\n"
                     f"Your posting habit: {posting_habit(agent)}\n\n"
                     f"Your first impression, before any discussion: {first:.1f}/10. You said: \"{v.get('reaction', '')}\"\n"
@@ -225,6 +237,9 @@ async def run_social(run_id: str, stimulus: dict, agents: list[dict], verdicts: 
                 new_score = my
                 state["suppressed_moves"] = state.get("suppressed_moves", 0) + 1
             action = out.get("action", "nothing")
+            # Offered as one choice next to "like", reposting never got picked; asked on its own, passing a post on is a repost of it.
+            if out.get("pass_on") and action in ("nothing", "like") and feed:
+                action = "repost"
             target = next((p for p in feed if p.id == out.get("target_post_id")), None) if action in ("reply", "repost", "like") else None
             if action in ("reply", "repost", "like") and target is None and feed:
                 target = feed[0]
