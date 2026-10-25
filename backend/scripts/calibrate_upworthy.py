@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import db  # noqa: E402
 from app.config import settings  # noqa: E402
+from app.engine.judge import stop_pct  # noqa: E402
 from app.engine.runner import village  # noqa: E402
 from app.engine.stage1 import first_impression, stage1_system  # noqa: E402
 from app.llm import BudgetExceeded, Meter  # noqa: E402
@@ -87,7 +88,7 @@ async def judge_arm(headline: str, crowd: list[dict], seed: int, meter: Meter) -
     vs = first + list(await asyncio.gather(*(one(a) for a in crowd[1:])))
     return {"click": sum(CLICK_VALUE.get(v.get("would_click", "No"), 0.0) for v in vs) / len(vs),
             "clickYes": sum(v.get("would_click") == "Yes" for v in vs) / len(vs),
-            "stop": sum(bool(v.get("noticed")) for v in vs) / len(vs), "score": sum(v["score"] for v in vs) / len(vs)}
+            "stop": sum(stop_pct(v) for v in vs) / len(vs) / 100, "score": sum(v["score"] for v in vs) / len(vs)}
 
 
 def binomial_p(hits: float, n: int) -> float:

@@ -136,7 +136,7 @@ export default function Scorecard() {
           {segs.some(s => s.stop != null) && (
             <div className="flex gap-1 mb-3 text-xs">
               <span className="text-muted mr-1 self-center">Show:</span>
-              {([['score', 'Score'], ['stop', 'Would stop'], ['click', 'Would click']] as const).map(([k, l]) => <button key={k} className="tab py-0.5 px-2" data-active={metric === k} onClick={() => setMetric(k)}>{l}</button>)}
+              {([['score', 'Score'], ['stop', 'Stop chance'], ['click', 'Would click']] as const).map(([k, l]) => <button key={k} className="tab py-0.5 px-2" data-active={metric === k} onClick={() => setMetric(k)}>{l}</button>)}
             </div>
           )}
           <div className="space-y-2">
@@ -307,7 +307,7 @@ function AttentionCard({ at, margins }: { at: Attention; margins?: ScorecardData
       <div className="grid md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-5">
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-2 text-center">
-            <Mini label="Would stop scrolling" value={`${at.stopRate}%`} c={at.stopRate >= 30 ? '#3ddc97' : at.stopRate >= 15 ? '#f5c242' : '#ff6b6b'} range={rangeText(margins?.stop, 'pct')} />
+            <Mini label="Chance they'd stop scrolling" value={`${at.stopRate}%`} c={at.stopRate >= 30 ? '#3ddc97' : at.stopRate >= 15 ? '#f5c242' : '#ff6b6b'} range={rangeText(margins?.stop, 'pct')} />
             <Mini label={`Would click (+${at.click.maybe}% maybe)`} value={`${at.click.yes}%`} c={at.click.yes >= 10 ? '#3ddc97' : at.click.yes >= 4 ? '#f5c242' : '#ff6b6b'} range={rangeText(margins?.click, 'pct')} />
           </div>
           {at.glance.length > 0 && (
@@ -336,7 +336,7 @@ function AttentionCard({ at, margins }: { at: Attention; margins?: ScorecardData
               </div>
             ))}
           </div>
-          <div className="text-[11px] text-muted mt-2">Placements come from each person's media habits; small groups (n under 10) are noisy.</div>
+          <div className="text-[11px] text-muted mt-2">"Stop" is the average of each person's 0-10 chance of stopping, so it reads as the share expected to stop. Placements come from each person's media habits; small groups (n under 10) are noisy.</div>
         </div>
       </div>
     </div>
@@ -349,6 +349,8 @@ const LIKELIHOOD_BINS = ['0', '1-2', '3-4', '5', '6-7', '8-9', '10']
 function BuyingCard({ iv, margins }: { iv: InterviewSummary; margins?: ScorecardData['margins'] }) {
   const lk = iv.likelihood!, ch = iv.choice, pr = iv.price
   const peak = Math.max(1, ...lk.dist)
+  // Reports from before "likely" was stored: 6-7, 8-9 and 10 are the last three bars.
+  const likely = lk.likely ?? Math.round((lk.dist[4] + lk.dist[5] + lk.dist[6]) / Math.max(1, lk.dist.reduce((s, c) => s + c, 0)) * 100)
   return (
     <div className="card p-5">
       <h2 className="font-semibold mb-3 flex flex-wrap items-center gap-2"><ShoppingCart size={16} className="text-pos" /> Would they buy it?{pr ? ' At what price?' : ''}
@@ -357,7 +359,7 @@ function BuyingCard({ iv, margins }: { iv: InterviewSummary; margins?: Scorecard
         <div>
           <div className="grid grid-cols-2 gap-2 text-center">
             <Mini label="Likelihood to buy (0-10)" value={lk.mean.toFixed(1)} c={lk.mean >= 6 ? '#3ddc97' : lk.mean >= 4 ? '#f5c242' : '#ff6b6b'} range={rangeText(margins?.likelihood, 'pts')} />
-            <Mini label="Expected buyers, as stated" value={`${lk.expectedBuyers}%`} c="#e6ebf5" />
+            <Mini label="Said likely (6-10)" value={`${likely}%`} c={likely >= 20 ? '#3ddc97' : likely >= 8 ? '#f5c242' : '#ff6b6b'} />
           </div>
           <div className="flex items-end gap-1 h-14 mt-3">
             {lk.dist.map((c, i) => (
@@ -367,7 +369,7 @@ function BuyingCard({ iv, margins }: { iv: InterviewSummary; margins?: Scorecard
               </div>
             ))}
           </div>
-          <div className="text-[11px] text-muted mt-1">{lk.top2}% said 8-10. People overstate: real conversion usually lands well below the stated figure.</div>
+          <div className="text-[11px] text-muted mt-1">{lk.top2}% said 8-10. People overstate: real conversion usually lands well below what they say.</div>
         </div>
         {ch && (
           <div>

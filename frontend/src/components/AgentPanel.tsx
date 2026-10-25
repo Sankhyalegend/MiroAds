@@ -71,7 +71,7 @@ export default function AgentPanel({ runId, persona, onClose }: { runId: string 
           <div className="text-xs text-muted uppercase tracking-wide">First impression · {d.verdict.score.toFixed(1)} · {d.verdict.intent}</div>
           {d.verdict.noticed != null && (
             <div className="text-xs">
-              <span className="text-muted">Met it: </span>{d.verdict.placement ?? 'unknown'} · {d.verdict.noticed ? 'stopped to look' : 'would have scrolled past'}
+              <span className="text-muted">Met it: </span>{d.verdict.placement ?? 'unknown'} · {d.verdict.stop_chance != null ? `chance of stopping ${d.verdict.stop_chance}/10` : d.verdict.noticed ? 'stopped to look' : 'would have scrolled past'}
               {d.verdict.noticed && d.verdict.two_second_takeaway ? <> · took in “{d.verdict.two_second_takeaway}”</> : null} · would click: {d.verdict.would_click}
             </div>
           )}

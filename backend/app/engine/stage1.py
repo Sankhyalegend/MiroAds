@@ -84,8 +84,12 @@ def verdict_schema(stype: str) -> dict:
         return VERDICT_SCHEMA
     base = VERDICT_SCHEMA["properties"]
     props = {
-        "noticed": {"type": "boolean", "description": "Honestly: in that moment, would you have stopped to look at it at all? Most ads get scrolled past."},
-        "two_second_takeaway": {"type": "string", "description": "What you took in within the first 2 seconds, 10 words or fewer; 'nothing' if you'd have scrolled past"},
+        # A yes/no "would you have stopped?" came back yes from all 100 people in a live run: once shown the ad, the model
+        # says it noticed it. A chance with anchors spreads out, and its average is the expected stop rate.
+        "stop_chance": {"type": "number", "description": "0-10: in that moment, how likely is it that this would have stopped you at all, rather than you scrolling or "
+                                                         "walking past? 0 = gone before it registers, 2 = a glance and keep going, 5 = 50/50, 7 = you'd probably stop "
+                                                         "for a few seconds, 10 = it would definitely stop you. Most people give most ads 0-3."},
+        "two_second_takeaway": {"type": "string", "description": "What registered within the first 2 seconds, 10 words or fewer; 'nothing' if it wouldn't have registered"},
         "score": base["score"], "intent": base["intent"],
         "would_click": {"type": "string", "enum": ["Yes", "Maybe", "No"], "description": CLICK[stype]},
         **{k: v for k, v in base.items() if k not in ("score", "intent")},
@@ -157,9 +161,9 @@ def fake_verdict(agent: dict, stype: str, rng: random.Random) -> dict:
     if stype in SITUATION:
         # Most ads are scrolled past; people who like ads, or like this one, stop more often.
         p_stop = 0.25 + 0.04 * (score - 5) + {"Ignores most ads": -0.1, "Sceptical of ads": -0.05, "Enjoys discovering things through ads": 0.15}.get(ex.get("adReceptivity", ""), 0)
-        noticed = rng.random() < max(0.05, min(0.9, p_stop))
-        attention = {"noticed": noticed, "two_second_takeaway": "a new product, not sure what" if noticed else "nothing",
-                     "would_click": "Yes" if noticed and score >= 7 else "Maybe" if noticed and score >= 5 else "No"}
+        chance = round(max(0.0, min(10.0, p_stop * 10 + (rng.random() - 0.5) * 4)))
+        attention = {"stop_chance": chance, "two_second_takeaway": "a new product, not sure what" if chance >= 5 else "nothing",
+                     "would_click": "Yes" if chance >= 5 and score >= 7 else "Maybe" if chance >= 5 and score >= 5 else "No"}
     return {
         **attention,
         "score": score,
@@ -203,6 +207,9 @@ async def first_impression(agent: dict, stype: str, system: str, seen: list[dict
             raise
         v = fake_verdict(agent, stype, rng) | {"_error": str(e)[:160]}
     v["score"] = float(max(0, min(10, v.get("score", 5))))
+    if "stop_chance" in v:
+        v["stop_chance"] = float(max(0, min(10, v["stop_chance"])))
+        v["noticed"] = v["stop_chance"] >= 5  # more likely than not to stop: whose 2-second takeaways are grouped
     if place:
         v["placement"] = place
     return v

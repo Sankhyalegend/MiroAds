@@ -6,6 +6,7 @@ from __future__ import annotations
 import math
 
 from .. import db
+from .judge import stop_pct
 
 Z95 = 1.96
 
@@ -18,7 +19,7 @@ def _final(a: dict) -> float:
 MEASURES = [
     ("score", "Score after the discussion", "points", lambda a: _final(a)),
     ("first", "First-impression score", "points", lambda a: a["verdict"]["score"]),
-    ("stop", "Would stop scrolling", "%", lambda a: 100.0 * bool(a["verdict"]["noticed"]) if "noticed" in a["verdict"] else None),
+    ("stop", "Chance they'd stop scrolling", "%", lambda a: stop_pct(a["verdict"]) if "noticed" in a["verdict"] else None),
     ("click", "Would click", "%", lambda a: 100.0 * (a["verdict"].get("would_click") == "Yes") if "would_click" in a["verdict"] else None),
     ("buy", "Would buy / back (stated)", "%", lambda a: 100.0 * (a["interview"]["intent"] == "Would buy/use") if a.get("interview") else None),
     ("likelihood", "Likelihood to buy (0-10)", "points", lambda a: float(a["interview"]["likelihood"]) if a.get("interview") and "likelihood" in a["interview"] else None),

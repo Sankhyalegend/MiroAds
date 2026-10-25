@@ -323,9 +323,10 @@ def _buying_stats(ivs: list[dict], price: str | None) -> dict:
         return {}
     n = len(lik)
     ch = Counter(iv.get("choice") for iv in ivs if "choice" in iv)
-    mean = float(np.mean(lik))
+    # The average chance read as "expected buyers" (17% in a live run where nobody said they'd buy) mostly counts the
+    # 1s and 2s people give to mean no, so the report shows how many said likely (6-10) and very likely (8-10) instead.
     return {
-        "likelihood": {"mean": round(mean, 1), "expectedBuyers": round(mean * 10), "top2": _pct(sum(1 for x in lik if x >= 8), n),
+        "likelihood": {"mean": round(float(np.mean(lik)), 1), "likely": _pct(sum(1 for x in lik if x >= 6), n), "top2": _pct(sum(1 for x in lik if x >= 8), n),
                        "dist": [sum(1 for x in lik if lo <= x <= hi) for lo, hi in ((0, 0), (1, 2), (3, 4), (5, 5), (6, 7), (8, 9), (10, 10))]},
         "choice": {"this": _pct(ch["This one"], n), "alternative": _pct(ch["The alternative I named"], n), "neither": _pct(ch["Neither"], n)},
         "price": _price_test(ivs, price),
@@ -370,21 +371,27 @@ def _glance_items(agents: list[dict], verdicts: dict[int, dict]) -> list[tuple[s
             and v.get("two_second_takeaway", "").strip().lower().rstrip(".") not in ("nothing", "none", "")]
 
 
+def stop_pct(v: dict) -> float:
+    """A person's chance of stopping, in %: their 0-10 stop chance, or 0/100 from the yes/no asked on the first runs."""
+    return float(v["stop_chance"]) * 10 if "stop_chance" in v else 100.0 * bool(v["noticed"])
+
+
 def _attention_stats(agents: list[dict], verdicts: dict[int, dict]) -> dict | None:
-    """Would they have stopped, would they click, by where they met it. None for business ideas and older runs."""
+    """How likely they were to stop, would they click, by where they met it. The stop rate is the average stop chance:
+    the share expected to stop. None for business ideas and older runs."""
     rows = [(a, v) for a in agents if (v := verdicts.get(a["id"])) and "noticed" in v]
     if not rows:
         return None
     n = len(rows)
     clicks = Counter(v.get("would_click", "No") for _, v in rows)
-    by_place: dict[str, list[int]] = defaultdict(lambda: [0, 0, 0])
+    by_place: dict[str, list[float]] = defaultdict(lambda: [0, 0.0, 0])
     for _, v in rows:
         b = by_place[v.get("placement", "Unknown")]
-        b[0] += 1; b[1] += bool(v["noticed"]); b[2] += v.get("would_click") == "Yes"
+        b[0] += 1; b[1] += stop_pct(v); b[2] += v.get("would_click") == "Yes"
     return {
-        "n": n, "stopRate": _pct(sum(1 for _, v in rows if v["noticed"]), n),
+        "n": n, "stopRate": round(sum(stop_pct(v) for _, v in rows) / n),
         "click": {"yes": _pct(clicks["Yes"], n), "maybe": _pct(clicks["Maybe"], n), "no": _pct(clicks["No"], n)},
-        "byPlacement": sorted(({"placement": p, "n": c[0], "stopRate": _pct(c[1], c[0]), "clickRate": _pct(c[2], c[0])} for p, c in by_place.items()), key=lambda x: -x["n"]),
+        "byPlacement": sorted(({"placement": p, "n": c[0], "stopRate": round(c[1] / c[0]), "clickRate": _pct(c[2], c[0])} for p, c in by_place.items()), key=lambda x: -x["n"]),
         "glance": _themes(_glance_items(agents, verdicts), max_themes=5),
     }
 
@@ -395,8 +402,9 @@ def attention_summary(stats: dict) -> str:
         return ""
     places = "; ".join(f"{p['placement']}: {p['stopRate']}% stop, {p['clickRate']}% click (n={p['n']})" for p in at["byPlacement"][:8])
     glance = "; ".join(f"{g['text']} ({g['count']})" for g in at["glance"][:5]) or "nothing clear"
-    return (f"ATTENTION (each person met it where they usually meet ads): {at['stopRate']}% would have stopped scrolling; would click yes {at['click']['yes']}%, "
-            f"maybe {at['click']['maybe']}%. By placement: {places}. What those who stopped took in within 2 seconds: {glance}.")
+    return (f"ATTENTION (each person met it where they usually meet ads): average chance of stopping {at['stopRate']}% (the share expected to stop); "
+            f"would click yes {at['click']['yes']}%, maybe {at['click']['maybe']}%. By placement: {places}. "
+            f"What those likely to stop took in within 2 seconds: {glance}.")
 
 
 def interview_summary(stats: dict) -> str:
@@ -410,8 +418,8 @@ def interview_summary(stats: dict) -> str:
     buying = ""
     if iv.get("likelihood"):
         lk, ch, pr = iv["likelihood"], iv["choice"], iv.get("price")
-        buying = (f"\nPurchase likelihood (0-10, labelled): mean {lk['mean']}, so about {lk['expectedBuyers']}% expected to buy as stated (people overstate; "
-                  f"real conversion is usually far lower); {lk['top2']}% said 8-10. Choice today: this {ch['this']}%, their alternative {ch['alternative']}%, neither {ch['neither']}%.")
+        buying = (f"\nPurchase likelihood (0-10, labelled): mean {lk['mean']}; {lk['likely']}% said 6-10 (likely) and {lk['top2']}% said 8-10 "
+                  f"(people overstate; real conversion is usually far lower). Choice today: this {ch['this']}%, their alternative {ch['alternative']}%, neither {ch['neither']}%.")
         if pr:
             c = pr["currency"]
             buying += (f" Price test (n={pr['n']}): acceptable range {c}{pr['range'][0]}-{c}{pr['range'][1]}, optimal {c}{pr['optimal']}"
@@ -444,7 +452,7 @@ def _margin_cols(agents: list[dict], verdicts: dict[int, dict], fs: np.ndarray, 
     ivs = [interviews[a["id"]] for a in agents if a["id"] in interviews]
     return {
         "score": list(fs), "buy": [100.0 * (s == "Would buy/use") for s in stated],
-        "stop": [100.0 * bool(v["noticed"]) for v in vs if "noticed" in v],
+        "stop": [stop_pct(v) for v in vs if "noticed" in v],
         "click": [100.0 * (v.get("would_click") == "Yes") for v in vs if "would_click" in v],
         "likelihood": [float(iv["likelihood"]) for iv in ivs if "likelihood" in iv],
         "nps": [100.0 if iv["recommend"] >= 9 else -100.0 if iv["recommend"] <= 6 else 0.0 for iv in ivs],
@@ -474,7 +482,7 @@ def compute_stats(agents: list[dict], verdicts: dict[int, dict], final: dict[int
         for k, v in m.items():
             row = {"segment": k, "group": group, "score": round(float(np.mean([s for s, _, _ in v])), 1), "n": len(v), "intent": _pct(sum(b for _, b, _ in v), len(v))}
             if attention:  # stop rate and click intent per segment
-                row |= {"stop": _pct(sum(1 for *_, x in v if x.get("noticed")), len(v)), "click": _pct(sum(1 for *_, x in v if x.get("would_click") == "Yes"), len(v))}
+                row |= {"stop": round(sum(stop_pct(x) for *_, x in v if "noticed" in x) / len(v)), "click": _pct(sum(1 for *_, x in v if x.get("would_click") == "Yes"), len(v))}
             out.append(row)
         return out
     groups = [("Profession", lambda a: a["professionGroup"]), ("Ideology", lambda a: a["ideology"]), ("Income", lambda a: a["income"]), ("Age", lambda a: a["ageBand"]),

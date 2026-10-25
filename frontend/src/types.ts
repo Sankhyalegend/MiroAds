@@ -149,8 +149,8 @@ export interface InterviewSummary {
   themes: { text: string; agent?: string; count: number; quotes: { agent: string; text: string }[] }[]
   fixes?: { text: string; count: number }[]
   quotes: { agent: string; intent: Intent; text: string }[]
-  /** `expectedBuyers` is the mean likelihood as a percentage; `dist` counts answers 0, 1-2, 3-4, 5, 6-7, 8-9, 10. */
-  likelihood?: { mean: number; expectedBuyers: number; top2: number; dist: number[] }
+  /** `likely` and `top2`: % who said 6-10 and 8-10; `dist` counts answers 0, 1-2, 3-4, 5, 6-7, 8-9, 10. */
+  likelihood?: { mean: number; likely: number; top2: number; dist: number[] }
   choice?: { this: number; alternative: number; neither: number }
   price?: PriceTest | null
 }
@@ -216,8 +216,8 @@ export interface AgentDetail extends Persona {
   }
   verdict?: {
     score: number; intent: string; reaction: string; objection: string; missing: string; price_reaction?: string; reasoning?: string; confidence?: number
-    /** Where they met it and what they did in the moment (ads, sites and offers). */
-    placement?: string; noticed?: boolean; two_second_takeaway?: string; would_click?: 'Yes' | 'Maybe' | 'No'
+    /** Where they met it and what they did in the moment (ads, sites and offers). `stop_chance` 0-10; `noticed` is 5 or more. */
+    placement?: string; stop_chance?: number; noticed?: boolean; two_second_takeaway?: string; would_click?: 'Yes' | 'Maybe' | 'No'
   } | null
   finalScore?: number | null
   actions?: { round: number; action: string; text: string; target?: number | null; score: number; why?: string }[]

@@ -57,7 +57,7 @@ async function shrinkImage(dataUrl: string): Promise<string> {
   const img = new window.Image()
   await new Promise((ok, bad) => { img.onload = ok; img.onerror = bad; img.src = dataUrl })
   const scale = Math.min(1, MAX_SIDE / Math.max(img.width, img.height))
-  if (scale === 1 && dataUrl.length < 1.4 * MB) return dataUrl
+  if (scale === 1 && dataUrl.length < 0.4 * MB) return dataUrl  // ~300 KB file: small enough to send as is
   const canvas = document.createElement('canvas')
   canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale)
   canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
