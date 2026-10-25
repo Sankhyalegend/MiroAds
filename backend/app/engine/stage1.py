@@ -183,35 +183,49 @@ def image_blocks(images: list[dict]) -> list[dict]:
     return blocks
 
 
+def stage1_system(stimulus: dict) -> str:
+    return SYSTEM_TEMPLATE.format(framing=FRAMING[stimulus["type"]], stimulus=stimulus_block(stimulus))
+
+
+async def first_impression(agent: dict, stype: str, system: str, seen: list[dict], meter: Meter, rng: random.Random) -> dict:
+    """One person's first impression: where they meet it, what they look at, what they make of it. Used by runs and by
+    scripts/calibrate_upworthy.py, so the accuracy check asks exactly what a test asks. Raises BudgetExceeded."""
+    place = placement(agent, stype, rng)
+    situation = (f"{SITUATION[stype].format(where=PLACEMENTS[place])} Give it the attention you'd really give it there: first say honestly "
+                 f"whether you'd even have stopped, then look at it properly." if place else "You hear this pitch for the first time.")
+    card = persona_card(agent["_sk"], agent["_profile"], agent["mood"], agent.get("_mood_reason", ""))
+    text = f"{card}{market_block(agent)}\n\n{situation} Give your first impression as JSON."
+    try:
+        v = await llm().json(role="crowd", system=system, user=[*seen, {"type": "text", "text": text}] if seen else text, schema=verdict_schema(stype),
+                             meter=meter, fake=lambda: fake_verdict(agent, stype, rng), max_tokens=900)
+    except Exception as e:
+        if type(e).__name__ == "BudgetExceeded":
+            raise
+        v = fake_verdict(agent, stype, rng) | {"_error": str(e)[:160]}
+    v["score"] = float(max(0, min(10, v.get("score", 5))))
+    if place:
+        v["placement"] = place
+    return v
+
+
 async def run_stage1(run_id: str, stimulus: dict, agents: list[dict], meter: Meter, state: dict) -> dict[int, dict]:
     """Returns {agent_id: verdict}. Emits 'impression' events as they complete."""
-    L = llm()
-    system = SYSTEM_TEMPLATE.format(framing=FRAMING[stimulus["type"]], stimulus=stimulus_block(stimulus))
+    system = stage1_system(stimulus)
     verdicts: dict[int, dict] = {}
     rng = random.Random(state["seed"] * 31)
     stype = stimulus["type"]
-    schema = verdict_schema(stype)
     seen = image_blocks(stimulus.get("_images") or [])
 
     async def one(agent: dict):
         if state.get("stopped"):
             return
-        local_rng = random.Random(rng.random())
-        place = placement(agent, stype, local_rng)
-        situation = (f"{SITUATION[stype].format(where=PLACEMENTS[place])} Give it the attention you'd really give it there: first say honestly "
-                     f"whether you'd even have stopped, then look at it properly." if place else "You hear this pitch for the first time.")
-        card = persona_card(agent["_sk"], agent["_profile"], agent["mood"], agent.get("_mood_reason", ""))
-        text = f"{card}{market_block(agent)}\n\n{situation} Give your first impression as JSON."
+        local_rng = random.Random(rng.random())  # drawn before any await, so each person's stream is the same every run
         try:
-            v = await L.json(role="crowd", system=system, user=[*seen, {"type": "text", "text": text}] if seen else text, schema=schema, meter=meter,
-                             fake=lambda: fake_verdict(agent, stype, local_rng), max_tokens=900)
+            v = await first_impression(agent, stype, system, seen, meter, local_rng)
         except Exception as e:
-            if type(e).__name__ == "BudgetExceeded":
-                state["stopped"] = True; state["stop_reason"] = str(e); return
-            v = fake_verdict(agent, stype, local_rng) | {"_error": str(e)[:160]}
-        v["score"] = float(max(0, min(10, v.get("score", 5))))
-        if place:
-            v["placement"] = place
+            if type(e).__name__ != "BudgetExceeded":
+                raise
+            state["stopped"] = True; state["stop_reason"] = str(e); return
         verdicts[agent["id"]] = v
         db.set_verdict(run_id, agent["id"], v)
         await bus.emit(run_id, {"kind": "impression", "agentId": agent["id"], "score": round(v["score"], 1)})

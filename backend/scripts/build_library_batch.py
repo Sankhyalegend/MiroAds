@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from anthropic import Anthropic  # noqa: E402
+from anthropic import Anthropic, APIConnectionError, APITimeoutError, InternalServerError  # noqa: E402
 
 from app import db  # noqa: E402
 from app.config import PRICING, settings  # noqa: E402
@@ -46,9 +46,21 @@ def request(seed: int) -> dict:
 
 
 def wait(client: Anthropic, b: dict) -> None:
+    """Polls once a minute. A dropped connection (a first build died on a DNS failure an hour in) is waited out for up to
+    30 minutes: the batch keeps running on Anthropic's side either way."""
     t0 = time.time()
+    failures = 0
     while True:
-        s = client.messages.batches.retrieve(b["id"])
+        try:
+            s = client.messages.batches.retrieve(b["id"])
+        except (APIConnectionError, APITimeoutError, InternalServerError) as e:
+            failures += 1
+            if failures > 30:
+                raise
+            print(f"  {time.time() - t0:5.0f}s  can't reach the API ({type(e).__name__}); trying again in a minute", flush=True)
+            time.sleep(60)
+            continue
+        failures = 0
         c = s.request_counts
         print(f"  {time.time() - t0:5.0f}s  {s.processing_status}: {c.succeeded} done, {c.errored} errored, {c.processing} to go", flush=True)
         if s.processing_status == "ended":
