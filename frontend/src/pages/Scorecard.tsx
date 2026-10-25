@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, RotateCcw, Download, AlertTriangle, Target, FlaskConical, Quote, Microscope, Users, Store, Mic, Eye, FileText, MousePointerClick, ShoppingCart } from 'lucide-react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { ArrowLeft, RotateCcw, Download, AlertTriangle, Target, FlaskConical, Quote, Microscope, Users, Store, Mic, Eye, FileText, MousePointerClick, ShoppingCart, GitBranch, ArrowLeftRight } from 'lucide-react'
 import { useStore } from '../store'
 import { api } from '../api'
 import type { Attention, InterviewSummary, PriceTest, Research, Stimulus } from '../types'
@@ -51,7 +51,11 @@ export default function Scorecard() {
           <div className="text-xs text-muted uppercase tracking-wide">{stimulus.type} · research report{id ? ` · ${id}` : ''}</div>
           <h1 className="text-2xl font-bold truncate">{stimulus.title}</h1>
         </div>
-        <div className="ml-auto flex gap-2">
+        <div className="ml-auto flex flex-wrap justify-end gap-2">
+          {liveId && R?.crowd?.sameCrowdAs && (
+            <button className="btn text-xs" onClick={() => nav(`/compare/${R.crowd!.sameCrowdAs}/${liveId}`)}><ArrowLeftRight size={14} /> Compare with first version</button>
+          )}
+          {liveId && <button className="btn btn-ghost text-xs" onClick={() => nav(`/?from=${liveId}`)} title="Change something and test it on these same people"><GitBranch size={14} /> Test a new version</button>}
           <button className="btn btn-ghost text-xs" onClick={download}><Download size={14} /> Export JSON</button>
           <button className="btn btn-ghost text-xs" onClick={() => { reset(); nav('/') }}><RotateCcw size={14} /> New run</button>
         </div>
@@ -101,8 +105,10 @@ export default function Scorecard() {
         <div className="text-xs mt-3"><span className="text-muted">Audience: </span>{stimulus.targetAudience || 'not given'}</div>
         {R?.crowd && (
           <div className="text-xs mt-1">
-            <span className="text-muted">Crowd: </span>#{R.crowd.seed} · {sc.confidence.sample.toLocaleString()} people drawn from a village of {R.crowd.village.toLocaleString()} ·{' '}
-            {R.crowd.newPeople >= sc.confidence.sample ? 'none of them in an earlier test' : `${R.crowd.newPeople.toLocaleString()} new to testing, the rest least tested so far`}
+            <span className="text-muted">Crowd: </span>#{R.crowd.seed} · {sc.confidence.sample.toLocaleString()} people
+            {R.crowd.sameCrowdAs
+              ? <>, the same people as the <Link className="text-accent hover:underline" to={`/scorecard/${R.crowd.sameCrowdAs}`}>first version</Link> (A/B test)</>
+              : <> drawn from a village of {R.crowd.village.toLocaleString()} · {R.crowd.newPeople >= sc.confidence.sample ? 'none of them in an earlier test' : `${R.crowd.newPeople.toLocaleString()} new to testing, the rest least tested so far`}</>}
           </div>
         )}
       </details>
@@ -308,8 +314,8 @@ function AttentionCard({ at }: { at: Attention }) {
             <div>
               <div className="text-xs text-muted uppercase tracking-wide mb-1.5">What they took in within 2 seconds</div>
               <div className="space-y-1.5">
-                {at.glance.slice(0, 4).map(g => (
-                  <div key={g.text} className="bg-panel-2 rounded-lg px-2.5 py-1.5 text-sm">
+                {at.glance.slice(0, 4).map((g, i) => (
+                  <div key={g.text + i} className="bg-panel-2 rounded-lg px-2.5 py-1.5 text-sm">
                     {g.text} <span className="text-xs text-muted">· {g.count}</span>
                     {g.quotes[0] && g.quotes[0].text !== g.text && <div className="text-xs text-muted">“{g.quotes[0].text}” — {g.quotes[0].agent}</div>}
                   </div>

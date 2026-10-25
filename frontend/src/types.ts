@@ -8,6 +8,8 @@ export interface Stimulus {
   title: string
   /** Normalized text brief the agents read (for images: vision-model description). */
   brief: string
+  /** The description as typed on the setup page, before offer fields and files were folded in; used to prefill a new version. */
+  briefInput?: string
   /** Optional data URL of an uploaded image (creative). */
   imageUrl?: string
   /** Website URL, if type === 'website'. */
@@ -187,9 +189,21 @@ export interface Research {
   market?: Partial<MarketBrief> & { status: MarketStatus; reason?: string; moodShifts?: { wary?: number; excited?: number } }
   /** How each list was grouped into themes: "model" (sorted by meaning) or "word matching". */
   groupedBy?: { objections?: string; takeaways?: string; fixes?: string }
-  /** The crowd number (seed), the size of the village it was drawn from, and how many had not been in a test before. */
-  crowd?: { seed: number; village: number; newPeople: number }
+  /** The crowd number (seed), the size of the village it was drawn from, and how many had not been in a test before.
+   * `sameCrowdAs`: for an A/B run, the run whose people it reused. */
+  crowd?: { seed: number; village: number; newPeople: number; sameCrowdAs?: string }
 }
+
+/** One run as the comparison page shows it. */
+export interface RunBrief {
+  id: string; title: string; type: StimulusType; brief: string; status: string; createdAt: number; costUsd: number
+  overall: number | null; verdict: string | null; n: number | null; objections: { text: string; count: number }[]
+  price?: PriceTest | null; sameCrowdAs?: string | null
+}
+/** B minus A for one measure, with a 95% margin of error; `unit` is "points", "%" (percentage points) or "" (NPS). */
+export interface CompareRow { key: string; label: string; unit: string; a: number; b: number; diff: number; margin: number; n: number; verdict: 'B higher' | 'A higher' | 'no clear difference' }
+/** `paired`: the same people judged both versions, so each person is compared with themselves. */
+export interface Comparison { a: RunBrief; b: RunBrief; paired: boolean; people: number; rows: CompareRow[] }
 
 export interface AgentDetail extends Persona {
   personaId?: number

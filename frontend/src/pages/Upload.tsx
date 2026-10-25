@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Image, Globe, Tag, Lightbulb, Play, Database, Loader2, UploadCloud, FileText, File as FileIcon, X, Wand2, Settings2, Store } from 'lucide-react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Image, Globe, Tag, Lightbulb, Play, Database, Loader2, UploadCloud, FileText, File as FileIcon, X, Wand2, Settings2, Store, Lock } from 'lucide-react'
 import { useStore } from '../store'
-import { api } from '../api'
+import { api, type RunView } from '../api'
 import type { Attachment, Stimulus, StimulusType } from '../types'
 
 const TYPES: { id: StimulusType; label: string; icon: React.ReactNode; hint: string; placeholder: string }[] = [
@@ -96,7 +96,11 @@ const minutes = (crowd: number, rounds: number, marketScan: boolean) => Math.max
 
 export default function Upload() {
   const nav = useNavigate()
-  const { setStimulus, crowdSize, setCrowdSize, rounds, setRounds, start, engine, setEngine, health, checkBackend, marketScan, setMarketScan } = useStore()
+  const { setStimulus, crowdSize, setCrowdSize, rounds, setRounds, start, engine, setEngine, health, checkBackend, marketScan, setMarketScan, sameCrowdAs, setSameCrowdAs } = useStore()
+  // "Test a new version" opens this page with ?from=<run>: the form starts from that run and the crowd is locked to its people.
+  const [params, setParams] = useSearchParams()
+  const from = params.get('from')
+  const [base, setBase] = useState<RunView | null>(null)
   const [type, setType] = useState<StimulusType>('creative')
   const [title, setTitle] = useState('')
   const [brief, setBrief] = useState('')
@@ -115,6 +119,20 @@ export default function Upload() {
   const [libJob, setLibJob] = useState<{ running: boolean; done: number; total: number; cost: number; error: string | null } | null>(null)
 
   useEffect(() => { checkBackend() }, [checkBackend])
+  useEffect(() => {
+    if (!from) { setSameCrowdAs(null); return }
+    let alive = true
+    api.getRun(from).then(r => {
+      if (!alive) return
+      const s = r.stimulus
+      setType(s.type); setTitle(`${s.title} (new version)`); setBrief(s.briefInput || s.brief || '')
+      setAudience(s.targetAudience ?? ''); setUrl(s.url ?? ''); setCompetitors(s.competitors ?? '')
+      if (s.offer) setOffer({ product: s.offer.product ?? '', price: s.offer.price ?? '', discount: s.offer.discount ?? '', urgency: s.offer.urgency ?? '', terms: s.offer.terms ?? '' })
+      if (s.attachments?.length) setFileErr(`The first version had ${s.attachments.map(a => a.name).join(', ')}. Files aren't kept after a run, so add this version's files.`)
+      setBase(r); setSameCrowdAs(from); setEngine('live')
+    }).catch(e => alive && setErr(`Couldn't load the first version: ${(e as Error).message}`))
+    return () => { alive = false }
+  }, [from, setSameCrowdAs, setEngine])
   useEffect(() => {
     if (!libJob?.running) return
     const t = window.setInterval(async () => {
@@ -157,7 +175,7 @@ export default function Upload() {
   const go = async () => {
     setErr(null); setBusy(true)
     const s: Stimulus = {
-      type, title: title.trim() || 'Untitled', targetAudience: audience,
+      type, title: title.trim() || 'Untitled', targetAudience: audience, briefInput: brief,
       brief: type === 'offer' ? `${offer.product}. Price ${offer.price}. ${offer.discount}. ${offer.urgency}. Terms: ${offer.terms}. ${brief}` : type === 'website' ? `Website ${url}. ${brief}` : brief,
       url: url || undefined, offer: type === 'offer' ? offer : undefined, competitors: competitors.trim() || undefined,
       attachments: files.length ? files : undefined,
@@ -179,7 +197,12 @@ export default function Upload() {
 
   const liveOk = !!health && health.library > 0
   const devMode = health?.devMode ?? true
-  const est = estimate(crowdSize, rounds, devMode, marketScan)
+  // A/B: the first version's people and rounds, and its market scan is reused rather than run again.
+  const locked = !!sameCrowdAs && !!base
+  const runCrowd = locked ? base.personas.length : crowdSize
+  const runRounds = locked ? base.config.rounds : rounds
+  const runMarket = locked ? false : marketScan
+  const est = estimate(runCrowd, runRounds, devMode, runMarket)
   // Live runs with a real key cost money, so they are confirmed first with the size and the estimate.
   const paid = engine === 'live' && !!health && health.provider !== 'fake'
   const hasContent = !!brief.trim() || files.length > 0 || (type === 'website' && !!url.trim()) || (type === 'offer' && !!offer.product.trim())
@@ -296,11 +319,20 @@ export default function Upload() {
             </div>
             <div className="text-xs flex items-center gap-2">
               {engine === 'live'
-                ? <><span className={`w-2 h-2 rounded-full ${health ? 'bg-pos' : 'bg-neg'}`} /><span className="text-muted">{health ? (health.provider === 'fake' ? 'Connected · fake provider (no API key, $0)' : `Connected · ${health.crowdModel}${health.devMode ? ' · dev mode' : ` + ${health.analystModel}`} · ${health.library.toLocaleString()} people`) : 'Backend offline'}</span>
+                ? <><span className={`w-2 h-2 rounded-full ${health ? 'bg-pos' : 'bg-neg'}`} /><span className="text-muted">{health ? (health.provider === 'fake' ? 'Connected · fake provider (no API key, $0)' : `Connected · ${health.crowdModel}${health.devMode ? ' · dev mode' : ` + ${health.analystModel}`} · village of ${(health.village ?? health.library).toLocaleString()}`) : 'Backend offline'}</span>
                   {!health && <button className="ml-auto text-accent hover:underline" onClick={() => checkBackend()}>Retry</button>}</>
                 : <span className="text-muted">Simulated in your browser from the persona traits. No AI, no cost.</span>}
             </div>
 
+            {locked ? (
+              <div className="rounded-xl border border-accent/50 bg-accent/10 p-3 text-sm">
+                <div className="font-medium flex items-center gap-1.5"><Lock size={14} className="text-accent" /> Same crowd as your first version</div>
+                <div className="text-xs text-muted mt-1 leading-snug">
+                  The same {base.personas.length.toLocaleString()} people, {base.config.rounds} {base.config.rounds === 1 ? 'round' : 'rounds'}, moods and market knowledge as “{base.stimulus.title}”, so only what you change here differs. You can compare the two when it's done.
+                </div>
+                <button className="text-xs text-accent hover:underline mt-1.5" onClick={() => { setSameCrowdAs(null); setBase(null); setParams({}) }}>Use new people instead</button>
+              </div>
+            ) : <>
             <div>
               <div className="text-xs text-muted mb-1.5">Crowd size</div>
               <div className="grid grid-cols-2 gap-2">
@@ -337,10 +369,11 @@ export default function Upload() {
                 <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${marketScan ? 'left-[18px]' : 'left-0.5'}`} />
               </button>
             </div>
+            </>}
 
             <div className="rounded-xl bg-panel-2 p-3 grid grid-cols-2 text-center">
               <div><div className="text-xl font-bold">{paid ? `$${est.toFixed(2)}` : 'Free'}</div><div className="text-[11px] text-muted">estimated cost</div></div>
-              <div><div className="text-xl font-bold">{engine === 'live' ? `~${minutes(crowdSize, rounds, marketScan)} min` : '<1 min'}</div><div className="text-[11px] text-muted">until the report</div></div>
+              <div><div className="text-xl font-bold">{engine === 'live' ? `~${minutes(runCrowd, runRounds, runMarket)} min` : '<1 min'}</div><div className="text-[11px] text-muted">until the report</div></div>
             </div>
 
             <button className="btn w-full justify-center text-base py-3" onClick={() => paid ? setConfirming(true) : go()} disabled={busy || !!blocker}>
@@ -384,12 +417,12 @@ export default function Upload() {
           <div className="card p-5 max-w-sm w-full space-y-3" role="dialog" aria-modal="true" aria-labelledby="confirm-title" onClick={e => e.stopPropagation()}>
             <h2 id="confirm-title" className="font-semibold text-lg">Start a paid run?</h2>
             <div className="text-sm space-y-1">
-              <div><span className="text-muted">Crowd: </span><b>{crowdSize.toLocaleString()} people</b> · {rounds} {rounds === 1 ? 'round' : 'rounds'}{marketScan ? ' · market scan' : ''}</div>
+              <div><span className="text-muted">Crowd: </span><b>{runCrowd.toLocaleString()} people</b> · {runRounds} {runRounds === 1 ? 'round' : 'rounds'}{runMarket ? ' · market scan' : ''}{locked ? ' · same people as the first version' : ''}</div>
               {files.length > 0 && <div><span className="text-muted">Files: </span>{files.length} to read</div>}
               <div><span className="text-muted">Report written by: </span>{health?.devMode ? `${health.crowdModel} (cheaper dev mode)` : health?.analystModel}</div>
               <div><span className="text-muted">Estimated cost: </span><b>${est.toFixed(2)}</b><span className="text-muted"> · stops at ${health?.runBudgetUsd ?? 2}</span></div>
             </div>
-            {crowdSize > 300 && <div className="text-xs text-neu">That's a large crowd. A run of 100–300 people is usually enough to check the result first.</div>}
+            {runCrowd > 300 && <div className="text-xs text-neu">That's a large crowd. A run of 100–300 people is usually enough to check the result first.</div>}
             <div className="flex gap-2 justify-end pt-1">
               <button className="btn btn-ghost" onClick={() => setConfirming(false)}>Cancel</button>
               <button className="btn" autoFocus onClick={() => { setConfirming(false); go() }}>Start run</button>

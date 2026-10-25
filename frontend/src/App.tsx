@@ -5,6 +5,7 @@ import Upload from './pages/Upload'
 import Run from './pages/Run'
 import Scorecard from './pages/Scorecard'
 import History from './pages/History'
+import Compare from './pages/Compare'
 import { useStore } from './store'
 
 function Header() {
@@ -51,6 +52,7 @@ export default function App() {
         <Route path="/scorecard" element={<Scorecard />} />
         <Route path="/scorecard/:id" element={<Scorecard />} />
         <Route path="/history" element={<History />} />
+        <Route path="/compare/:a/:b" element={<Compare />} />
       </Routes>
     </BrowserRouter>
   )

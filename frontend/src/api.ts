@@ -1,4 +1,4 @@
-import type { AgentDetail, Persona, Scorecard, SimEvent, Stimulus } from './types'
+import type { AgentDetail, Comparison, Persona, Scorecard, SimEvent, Stimulus } from './types'
 
 export const API_BASE: string = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8000'
 const WS_BASE = API_BASE.replace(/^http/, 'ws')
@@ -13,20 +13,25 @@ async function j<T>(path: string, init?: RequestInit): Promise<T> {
   return r.json() as Promise<T>
 }
 
-export interface Health { ok: boolean; provider: string; crowdModel: string; analystModel: string; devMode: boolean; library: number; runBudgetUsd: number }
+/** `village`: how many people new runs draw from. */
+export interface Health { ok: boolean; provider: string; crowdModel: string; analystModel: string; devMode: boolean; library: number; village?: number; runBudgetUsd: number }
+/** `sameCrowdAs`: the run whose people this A/B run reused. */
+export interface RunConfig { crowdSize: number; rounds: number; seed?: number; budgetUsd: number; marketScan?: boolean; sameCrowdAs?: string | null }
 export interface RunView {
   id: string; status: string; stage: string; costUsd: number; error: string | null
-  config: { crowdSize: number; rounds: number; seed?: number; budgetUsd: number }
+  config: RunConfig
   stimulus: Stimulus; personas: Persona[]; lastSeq: number; hasScorecard: boolean
 }
-export interface RunSummary { id: string; status: string; stage: string; costUsd: number; createdAt: number; stimulus: { type: string; title: string }; config: { crowdSize: number; rounds: number }; overall: number | null; verdict: string | null }
+export interface RunSummary { id: string; status: string; stage: string; costUsd: number; createdAt: number; stimulus: { type: string; title: string }; config: RunConfig; overall: number | null; verdict: string | null }
 
 export const api = {
   health: () => j<Health>('/health'),
   libraryStats: () => j<{ count: number; job: { running: boolean; done: number; total: number; cost: number; error: string | null } }>('/library/stats'),
   buildLibrary: (n: number, budgetUsd: number) => j<{ started: boolean; toGenerate: number }>('/library/build', { method: 'POST', body: JSON.stringify({ n, seed: 1, budgetUsd }) }),
   createStimulus: (s: Stimulus) => j<{ id: string }>('/stimuli', { method: 'POST', body: JSON.stringify(s) }),
-  createRun: (body: { stimulus_id: string; crowdSize: number; rounds: number; seed?: number; budgetUsd?: number; marketScan?: boolean }) => j<RunView>('/runs', { method: 'POST', body: JSON.stringify(body) }),
+  createRun: (body: { stimulus_id: string; crowdSize: number; rounds: number; seed?: number; budgetUsd?: number; marketScan?: boolean; sameCrowdAs?: string }) =>
+    j<RunView>('/runs', { method: 'POST', body: JSON.stringify(body) }),
+  compare: (a: string, b: string) => j<Comparison>(`/compare/${a}/${b}`),
   getRun: (id: string) => j<RunView>(`/runs/${id}`),
   stopRun: (id: string) => j<{ stopped: boolean }>(`/runs/${id}/stop`, { method: 'POST' }),
   getScorecard: (id: string) => j<Scorecard>(`/runs/${id}/scorecard`),

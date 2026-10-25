@@ -35,6 +35,27 @@ def village() -> list[dict]:
     return _village_cache["index"]
 
 
+def same_crowd(source_id: str) -> tuple[list[dict], dict, dict]:
+    """The people of an earlier run, with the moods, market knowledge and market scan they had there, so a new version is
+    judged by exactly the same crowd. Returns (crowd, market, mood shifts)."""
+    rows = db.get_run_agents(source_id)
+    if not rows:
+        raise RuntimeError(f"run {source_id} has no crowd to copy")
+    people = db.personas_by_ids([r["personaId"] for r in rows])
+    crowd = []
+    for r in rows:
+        a = {k: v for k, v in r.items() if k not in ("verdict", "finalScore", "actions", "context", "interview")}
+        a["_sk"], a["_profile"] = people[a["personaId"]]["skeleton"], people[a["personaId"]]["profile"]
+        if r.get("context"):
+            a["_market"] = r["context"]
+            if r["context"].get("moodReason"):
+                a["_mood_reason"] = r["context"]["moodReason"]
+        crowd.append(a)
+    ev = next((e for e in db.events_from(source_id, 0) if e["kind"] == "market"), None) or {}
+    market = {k: ev[k] for k in ("status", "brief", "reason", "searches") if k in ev} or {"status": "off"}
+    return crowd, market, ev.get("moodShifts", {})
+
+
 def stop_run(run_id: str) -> bool:
     st = _running.get(run_id)
     if st:
@@ -64,20 +85,25 @@ async def execute_run(run_id: str) -> None:
 
     try:
         llm()  # initialise provider early so a bad key fails fast
-        # ---- crowd: drawn from the people tested least so far ----
+        # ---- crowd: drawn from the people tested least so far, or for an A/B test the very people of an earlier run ----
         lib = village()
         if not lib:
             raise RuntimeError("Persona library is empty. Run scripts/build_library.py first.")
-        uses = db.persona_use_counts()
-        people: dict[int, dict] = {}
+        same = cfg.get("sameCrowdAs")
+        if same:
+            crowd, copied_market, copied_shifts = same_crowd(same)
+            state["crowd_info"] = {"seed": state["seed"], "village": len(lib), "newPeople": 0, "sameCrowdAs": same}
+        else:
+            uses = db.persona_use_counts()
+            people: dict[int, dict] = {}
 
-        def load(ids: list[int]) -> dict[int, dict]:
-            people.update(db.personas_by_ids(ids))
-            return people
-        crowd = sample_crowd(lib, int(cfg.get("crowdSize", 300)), stimulus.get("targetAudience", ""), state["seed"], use_counts=uses, load=load)
-        for a in crowd:
-            a["_sk"] = people[a["personaId"]]["skeleton"]; a["_profile"] = people[a["personaId"]]["profile"]
-        state["crowd_info"] = {"seed": state["seed"], "village": len(lib), "newPeople": sum(1 for a in crowd if not uses.get(a["personaId"]))}
+            def load(ids: list[int]) -> dict[int, dict]:
+                people.update(db.personas_by_ids(ids))
+                return people
+            crowd = sample_crowd(lib, int(cfg.get("crowdSize", 300)), stimulus.get("targetAudience", ""), state["seed"], use_counts=uses, load=load)
+            for a in crowd:
+                a["_sk"] = people[a["personaId"]]["skeleton"]; a["_profile"] = people[a["personaId"]]["profile"]
+            state["crowd_info"] = {"seed": state["seed"], "village": len(lib), "newPeople": sum(1 for a in crowd if not uses.get(a["personaId"]))}
         db.insert_run_agents(run_id, [{k: v for k, v in a.items() if not k.startswith("_")} for a in crowd])
         db.update_run(run_id, status="running")
         await bus.emit(run_id, {"kind": "crowd_ready", "n": len(crowd)})
@@ -88,10 +114,16 @@ async def execute_run(run_id: str) -> None:
 
         # ---- stage 0b: market scan; each agent gets the slice they'd plausibly know, and news can shift mood ----
         market: dict = {"status": "off"}
-        if cfg.get("marketScan", True):
-            await _set_stage(run_id, "market")
-            market = await run_market_scan(stimulus, crowd, meter)
-        shifts = apply_market(run_id, crowd, market.get("brief"), state["seed"])
+        if same:  # the same market knowledge and moods as in the first version's run
+            market, shifts = copied_market, copied_shifts
+            for a in crowd:
+                if a.get("_market"):
+                    db.set_context(run_id, a["id"], a["_market"], a["mood"], {k: v for k, v in a.items() if not k.startswith("_")})
+        else:
+            if cfg.get("marketScan", True):
+                await _set_stage(run_id, "market")
+                market = await run_market_scan(stimulus, crowd, meter)
+            shifts = apply_market(run_id, crowd, market.get("brief"), state["seed"])
         await bus.emit(run_id, {"kind": "market", **market, "moodShifts": shifts})
 
         # ---- stage 1 ----

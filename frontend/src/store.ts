@@ -49,6 +49,8 @@ interface State {
   speed: number
   /** Run a market scan (competitors, prices, news) before first impressions. */
   marketScan: boolean
+  /** A/B test: the next run reuses the people of this earlier run. Cleared once that run starts. */
+  sameCrowdAs: string | null
   personas: Persona[]
   runId: string | null
   stage: Stage
@@ -76,6 +78,7 @@ interface State {
   setRounds: (n: number) => void
   setSpeed: (ms: number) => void
   setMarketScan: (on: boolean) => void
+  setSameCrowdAs: (runId: string | null) => void
   start: () => Promise<string | null>
   loadRun: (id: string) => Promise<void>
   stop: () => void
@@ -201,6 +204,7 @@ export const useStore = create<State>((set, get) => {
     rounds: 5,
     speed: 3500,
     marketScan: true,
+    sameCrowdAs: null,
     personas: [],
     runId: null,
     stage: 'idle',
@@ -229,9 +233,10 @@ export const useStore = create<State>((set, get) => {
     setRounds: (rounds) => set({ rounds }),
     setSpeed: (speed) => set({ speed }),
     setMarketScan: (marketScan) => set({ marketScan }),
+    setSameCrowdAs: (sameCrowdAs) => set({ sameCrowdAs }),
 
     start: async () => {
-      const { stimulus, crowdSize, rounds, speed, engine, marketScan } = get()
+      const { stimulus, crowdSize, rounds, speed, engine, marketScan, sameCrowdAs } = get()
       if (!stimulus) return null
       stopper?.stop(); closeWs?.(); closeWs = null
       if (engine === 'mock') {
@@ -244,9 +249,10 @@ export const useStore = create<State>((set, get) => {
       try {
         const { id: stimulus_id } = await api.createStimulus(stimulus)
         // No seed: the backend picks a new crowd number, so every test meets people who haven't been tested yet.
-        const run = await api.createRun({ stimulus_id, crowdSize, rounds, marketScan })
-        freshRunState(run.personas, rounds)
-        set({ runId: run.id })
+        // An A/B run instead takes the earlier run's people, crowd number and rounds.
+        const run = await api.createRun({ stimulus_id, crowdSize, rounds, marketScan, sameCrowdAs: sameCrowdAs ?? undefined })
+        freshRunState(run.personas, run.config.rounds)
+        set({ runId: run.id, sameCrowdAs: null })
         attachWs(run.id, 0)
         return run.id
       } catch (e) {

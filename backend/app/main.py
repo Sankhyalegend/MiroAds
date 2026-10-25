@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from . import db
 from .config import settings
+from .engine.compare import compare_runs
 from .engine.events import bus
 from .engine.runner import start_run_task, stop_run, village
 from .llm import Meter
@@ -37,6 +38,7 @@ class StimulusIn(BaseModel):
     type: str = Field(pattern="^(creative|website|offer|idea)$")
     title: str
     brief: str = ""
+    briefInput: str = ""  # the description as typed, kept for "Test a new version"
     targetAudience: str = ""
     imageUrl: Optional[str] = None
     url: Optional[str] = None
@@ -52,6 +54,8 @@ class RunIn(BaseModel):
     seed: Optional[int] = None  # crowd number; a random one when not given, so every test meets different people
     budgetUsd: Optional[float] = None
     marketScan: bool = True
+    # A/B test: judge this version with the very people of an earlier run (their moods, market knowledge, crowd number and rounds).
+    sameCrowdAs: Optional[str] = None
 
 
 class LibraryBuildIn(BaseModel):
@@ -122,6 +126,12 @@ async def create_run(body: RunIn):
     rid = "run_" + uuid.uuid4().hex[:10]
     cfg = body.model_dump()
     cfg["budgetUsd"] = cfg["budgetUsd"] or settings.run_budget_usd
+    if body.sameCrowdAs:
+        src = db.get_run(body.sameCrowdAs)
+        if not src or src["status"] not in ("done", "stopped"):
+            raise HTTPException(409, "the run to copy the crowd from must exist and be finished")
+        n = db.q("SELECT COUNT(*) c FROM run_agents WHERE run_id=?", (body.sameCrowdAs,))[0]["c"]
+        cfg |= {"seed": src["config"].get("seed", 42), "crowdSize": n, "rounds": src["config"].get("rounds", 5), "marketScan": src["config"].get("marketScan", True)}
     if cfg["seed"] is None:
         cfg["seed"] = secrets.randbelow(1_000_000)
     db.create_run(rid, body.stimulus_id, cfg)
@@ -179,6 +189,14 @@ def get_scorecard(rid: str):
     if not sc:
         raise HTTPException(404, "scorecard not ready")
     return sc
+
+
+@app.get("/compare/{ra}/{rb}")
+def get_compare(ra: str, rb: str):
+    for rid in (ra, rb):
+        if not db.get_run(rid):
+            raise HTTPException(404, f"run {rid} not found")
+    return compare_runs(ra, rb)
 
 
 @app.get("/runs/{rid}/agents/{aid}")

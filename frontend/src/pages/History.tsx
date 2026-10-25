@@ -35,7 +35,14 @@ export default function History() {
             </div>
             <div className="w-8 h-8 rounded-lg bg-panel-2 grid place-items-center text-muted shrink-0">{TYPE_ICON[r.stimulus.type] ?? null}</div>
             <div className="min-w-0 flex-1">
-              <div className="font-semibold truncate">{r.stimulus.title}</div>
+              <div className="font-semibold truncate flex items-center gap-2">
+                <span className="truncate">{r.stimulus.title}</span>
+                {r.config.sameCrowdAs && (
+                  <span role="link" tabIndex={0} className="chip text-[10px] shrink-0 hover:border-accent" title="Same crowd as an earlier version: open the comparison"
+                    onClick={e => { e.stopPropagation(); nav(`/compare/${r.config.sameCrowdAs}/${r.id}`) }}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.stopPropagation(); nav(`/compare/${r.config.sameCrowdAs}/${r.id}`) } }}>A/B</span>
+                )}
+              </div>
               {r.verdict && <div className="text-sm truncate">{r.verdict}</div>}
               <div className="text-xs text-muted">{r.config.crowdSize.toLocaleString()} people · {r.config.rounds} rounds · ${r.costUsd.toFixed(2)} · {new Date(r.createdAt * 1000).toLocaleString()}</div>
             </div>

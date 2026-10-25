@@ -118,6 +118,7 @@ async def build_brief(stimulus: dict, meter: Meter) -> dict:
     `_images` holds the pictures themselves for first impressions; it is not saved with the stimulus."""
     s = dict(stimulus)
     s["_images"] = seen_images(s)
+    s["briefInput"] = s.get("briefInput") or s.get("brief", "")  # as typed, for "Test a new version"
     parts = [s.get("brief", "").strip()]
     if s.get("type") == "offer" and s.get("offer"):
         o = s["offer"]
