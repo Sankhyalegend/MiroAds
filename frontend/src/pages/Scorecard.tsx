@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, RotateCcw, Download, AlertTriangle, Target, FlaskConical, Quote, Microscope, Users, Store, Mic, Eye, FileText, MousePointerClick } from 'lucide-react'
+import { ArrowLeft, RotateCcw, Download, AlertTriangle, Target, FlaskConical, Quote, Microscope, Users, Store, Mic, Eye, FileText, MousePointerClick, ShoppingCart } from 'lucide-react'
 import { useStore } from '../store'
 import { api } from '../api'
-import type { Attention, InterviewSummary, Research, Stimulus } from '../types'
+import type { Attention, InterviewSummary, PriceTest, Research, Stimulus } from '../types'
 
 const col = (s: number) => s >= 7 ? '#3ddc97' : s >= 5 ? '#f5c242' : '#ff6b6b'
 
@@ -85,6 +85,7 @@ export default function Scorecard() {
       </div>
 
       {sc.attention && <AttentionCard at={sc.attention} />}
+      {sc.interviews?.likelihood && <BuyingCard iv={sc.interviews} />}
 
       <details className="card p-5">
         <summary className="cursor-pointer font-semibold flex flex-wrap items-center gap-2 list-none">
@@ -122,7 +123,9 @@ export default function Scorecard() {
         <div className="card p-5">
           <div className="flex items-center justify-between mb-3 gap-2">
             <h2 className="font-semibold">By segment</h2>
-            <div className="flex gap-1 flex-wrap justify-end">{groups.map(g => <button key={g} className="tab text-xs py-1 px-2" data-active={group === g} onClick={() => setGroup(g)}>{g}</button>)}</div>
+            <select className="input input-sm" value={group} onChange={e => setGroup(e.target.value)} aria-label="Segment">
+              {groups.map(g => <option key={g} value={g}>{g}</option>)}
+            </select>
           </div>
           {segs.some(s => s.stop != null) && (
             <div className="flex gap-1 mb-3 text-xs">
@@ -320,16 +323,85 @@ function AttentionCard({ at }: { at: Attention }) {
           <div className="space-y-1.5">
             {at.byPlacement.map(p => (
               <div key={p.placement} className="flex items-center gap-2 text-sm">
-                <div className="w-40 truncate shrink-0" title={p.placement}>{p.placement}</div>
-                <div className="flex-1 h-2 bg-panel-2 rounded-full overflow-hidden"><div className="h-full rounded-full bg-accent" style={{ width: `${(p.stopRate / top) * 100}%` }} /></div>
-                <div className="w-24 text-right text-xs"><b>{p.stopRate}%</b> stop · {p.clickRate}% click</div>
-                <div className="w-10 text-right text-xs text-muted">n={p.n}</div>
+                <div className="w-44 max-sm:w-28 truncate shrink-0" title={p.placement}>{p.placement}</div>
+                <div className="flex-1 min-w-8 h-2 bg-panel-2 rounded-full overflow-hidden"><div className="h-full rounded-full bg-accent" style={{ width: `${(p.stopRate / top) * 100}%` }} /></div>
+                <div className="text-right text-xs whitespace-nowrap"><b>{p.stopRate}%</b> stop · {p.clickRate}% click</div>
+                <div className="w-11 text-right text-xs text-muted shrink-0">n={p.n}</div>
               </div>
             ))}
           </div>
           <div className="text-[11px] text-muted mt-2">Placements come from each person's media habits; small groups (n under 10) are noisy.</div>
         </div>
       </div>
+    </div>
+  )
+}
+
+const LIKELIHOOD_BINS = ['0', '1-2', '3-4', '5', '6-7', '8-9', '10']
+
+/** Purchase likelihood, choice share and the price test from the exit interviews. */
+function BuyingCard({ iv }: { iv: InterviewSummary }) {
+  const lk = iv.likelihood!, ch = iv.choice, pr = iv.price
+  const peak = Math.max(1, ...lk.dist)
+  return (
+    <div className="card p-5">
+      <h2 className="font-semibold mb-3 flex flex-wrap items-center gap-2"><ShoppingCart size={16} className="text-pos" /> Would they buy it?{pr ? ' At what price?' : ''}
+        <span className="text-xs text-muted font-normal">exit interviews · {iv.n.toLocaleString()} people</span></h2>
+      <div className="grid md:grid-cols-3 gap-5">
+        <div>
+          <div className="grid grid-cols-2 gap-2 text-center">
+            <Mini label="Likelihood to buy (0-10)" value={lk.mean.toFixed(1)} c={lk.mean >= 6 ? '#3ddc97' : lk.mean >= 4 ? '#f5c242' : '#ff6b6b'} />
+            <Mini label="Expected buyers, as stated" value={`${lk.expectedBuyers}%`} c="#e6ebf5" />
+          </div>
+          <div className="flex items-end gap-1 h-14 mt-3">
+            {lk.dist.map((c, i) => (
+              <div key={i} className="flex-1 flex flex-col items-center justify-end h-full" title={`${c} said ${LIKELIHOOD_BINS[i]}`}>
+                <div className="w-full rounded-t bg-accent/70" style={{ height: `${(c / peak) * 100}%`, minHeight: c ? 2 : 0 }} />
+                <div className="text-[9px] text-muted mt-0.5">{LIKELIHOOD_BINS[i]}</div>
+              </div>
+            ))}
+          </div>
+          <div className="text-[11px] text-muted mt-1">{lk.top2}% said 8-10. People overstate: real conversion usually lands well below the stated figure.</div>
+        </div>
+        {ch && (
+          <div>
+            <div className="text-xs text-muted uppercase tracking-wide mb-1.5">If they had to choose today</div>
+            <div className="flex h-3 rounded-full overflow-hidden">
+              <div style={{ width: `${ch.this}%`, background: '#3ddc97' }} /><div style={{ width: `${ch.alternative}%`, background: '#f5c242' }} /><div style={{ width: `${ch.neither}%`, background: '#3a4660' }} />
+            </div>
+            <div className="text-xs mt-2 space-y-0.5">
+              <div><span style={{ color: '#3ddc97' }}>●</span> This one <b>{ch.this}%</b></div>
+              <div><span style={{ color: '#f5c242' }}>●</span> The alternative they named <b>{ch.alternative}%</b></div>
+              <div><span className="text-muted">●</span> Neither <b>{ch.neither}%</b></div>
+            </div>
+            {iv.alternatives.length > 0 && <div className="text-[11px] text-muted mt-2">Alternatives named most: {iv.alternatives.slice(0, 3).map(a => a.name).join(', ')}</div>}
+          </div>
+        )}
+        {pr ? <PriceRange pr={pr} /> : <div className="text-sm text-muted">No price was shown, so the price questions were skipped. Add a price to the brief to test it.</div>}
+      </div>
+    </div>
+  )
+}
+
+function PriceRange({ pr }: { pr: PriceTest }) {
+  const fmt = (x: number) => `${pr.currency}${x.toLocaleString()}`
+  const pts = [pr.range[0], pr.range[1], pr.optimal, ...(pr.shown != null ? [pr.shown] : [])]
+  const lo = Math.min(...pts) * 0.85, hi = Math.max(...pts) * 1.1
+  const x = (v: number) => `${((v - lo) / (hi - lo)) * 100}%`
+  return (
+    <div>
+      <div className="text-xs text-muted uppercase tracking-wide mb-1.5">Price test</div>
+      <div className="text-sm">Acceptable range <b>{fmt(pr.range[0])}–{fmt(pr.range[1])}</b> · best price <b>{fmt(pr.optimal)}</b></div>
+      <div className="relative h-8 mt-3 mb-1">
+        <div className="absolute top-3 left-0 right-0 h-2 rounded-full bg-panel-2" />
+        <div className="absolute top-3 h-2 rounded-full bg-pos/60" style={{ left: x(pr.range[0]), width: `calc(${x(pr.range[1])} - ${x(pr.range[0])})` }} />
+        <div className="absolute top-1.5 w-0.5 h-5 bg-pos" style={{ left: x(pr.optimal) }} title={`Best price ${fmt(pr.optimal)}`} />
+        {pr.shown != null && <div className="absolute top-0.5 w-0.5 h-7 bg-neg" style={{ left: x(pr.shown) }} title={`Shown price ${fmt(pr.shown)}`} />}
+      </div>
+      {pr.shown != null && (
+        <div className="text-xs"><span className="text-neg">|</span> At the shown {fmt(pr.shown)}: <b>{pr.tooExpensiveAtShown}%</b> say too expensive, {pr.bargainAtShown}% a bargain.</div>
+      )}
+      <div className="text-[11px] text-muted mt-1">Van Westendorp price questions, {pr.n} consistent answers{pr.dropped ? ` (${pr.dropped} out of order left out)` : ''}.</div>
     </div>
   )
 }

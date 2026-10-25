@@ -12,7 +12,7 @@ from ..personas.frame import FRAME_VERSION
 from ..personas.sampler import composition, sample_crowd
 from .events import bus
 from .experts import run_experts
-from .interview import run_interviews
+from .interview import price_shown, run_interviews
 from .judge import compute_stats, group_by_meaning, run_judge
 from .market import apply_market, run_market_scan
 from .social import run_social
@@ -114,7 +114,7 @@ async def execute_run(run_id: str) -> None:
             interviews = await run_interviews(run_id, stimulus, crowd, verdicts, final, posts, meter, state)
 
         # ---- stats (code) ----
-        stats = compute_stats(crowd, verdicts, final, mind_changes, posts, interviews)
+        stats = compute_stats(crowd, verdicts, final, mind_changes, posts, interviews, price_shown(stimulus))
         await group_by_meaning(stats, crowd, verdicts, final, interviews, stimulus, meter)
         comp = composition(crowd)
 

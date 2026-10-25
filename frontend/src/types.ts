@@ -94,7 +94,7 @@ export type SimEvent =
   | { kind: 'crowd_ready'; n: number; t: number }
   | ({ kind: 'market'; t: number } & MarketScan)
   /** Exit interview: what the agent concluded once the discussion was over. */
-  | { kind: 'interview'; agentId: number; intent: Intent; recommend: number; changedMind: ChangedMind; quote: string; t: number }
+  | { kind: 'interview'; agentId: number; intent: Intent; recommend: number; changedMind: ChangedMind; quote: string; likelihood?: number; t: number }
   | { kind: 'error'; message: string; t: number }
   | { kind: 'done'; t: number; costUsd?: number; failed?: boolean }
 
@@ -113,6 +113,24 @@ export interface Interview {
   recommend: number
   oneFix: string
   quote: string
+  /** 0..10 on a labelled scale: how likely they are to actually buy, sign up or back it in the next 3 months. */
+  likelihood?: number
+  choice?: 'This one' | 'The alternative I named' | 'Neither'
+  /** Price thresholds in the shown currency, when a price was shown. */
+  price?: { tooCheap: number; bargain: number; gettingExpensive: number; tooExpensive: number }
+}
+
+/** Van Westendorp price test: the acceptable range and the optimal price, in the shown currency. */
+export interface PriceTest {
+  currency: string
+  n: number
+  dropped: number
+  range: [number, number]
+  optimal: number
+  indifference: number
+  shown?: number
+  tooExpensiveAtShown?: number
+  bargainAtShown?: number
 }
 
 /** Exit interviews summarised for the report. Percentages are of interviewed agents. */
@@ -129,6 +147,10 @@ export interface InterviewSummary {
   themes: { text: string; agent?: string; count: number; quotes: { agent: string; text: string }[] }[]
   fixes?: { text: string; count: number }[]
   quotes: { agent: string; intent: Intent; text: string }[]
+  /** `expectedBuyers` is the mean likelihood as a percentage; `dist` counts answers 0, 1-2, 3-4, 5, 6-7, 8-9, 10. */
+  likelihood?: { mean: number; expectedBuyers: number; top2: number; dist: number[] }
+  choice?: { this: number; alternative: number; neither: number }
+  price?: PriceTest | null
 }
 
 /** First impressions where people really meet it: would they have stopped, would they click, by placement. */

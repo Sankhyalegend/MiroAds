@@ -115,6 +115,12 @@ export default function AgentPanel({ runId, persona, onClose }: { runId: string 
           <div className="text-xs"><span className="text-muted">Changed mind: </span>{d.interview.changedMind}{d.interview.changedMind !== 'No' && d.interview.whatChangedIt ? `, because of ${d.interview.whatChangedIt}` : ''}</div>
           <div className="text-xs"><span className="text-muted">Versus what they know: </span>{d.interview.vsAlternatives}{d.interview.alternativeNamed && !/^(nothing|none)$/i.test(d.interview.alternativeNamed) ? ` (would compare with ${d.interview.alternativeNamed})` : ''}</div>
           <div className="text-xs"><span className="text-muted">Would win them over: </span>{d.interview.oneFix}</div>
+          {d.interview.likelihood != null && (
+            <div className="text-xs"><span className="text-muted">Likelihood to buy: </span>{d.interview.likelihood}/10 · would choose: {d.interview.choice}</div>
+          )}
+          {d.interview.price && (
+            <div className="text-xs"><span className="text-muted">On price: </span>too cheap {d.interview.price.tooCheap} · bargain {d.interview.price.bargain} · getting expensive {d.interview.price.gettingExpensive} · too expensive {d.interview.price.tooExpensive}</div>
+          )}
         </div>
       ) : streamed ? (
         <div className="bg-panel-2 rounded-lg p-3 space-y-1">

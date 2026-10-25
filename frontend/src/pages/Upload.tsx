@@ -81,10 +81,11 @@ function readFile(f: File, kind: Kind): Promise<Attachment> {
 // ---- cost and time ----
 const HAIKU_IN = 0.10 / 1e6, HAIKU_OUT = 0.50 / 1e6, SONNET_IN = 2 / 1e6, SONNET_OUT = 10 / 1e6, SEARCH = 0.01
 function estimate(crowd: number, rounds: number, devMode: boolean, marketScan: boolean) {
-  const stage1 = crowd * (2750 * HAIKU_IN + 260 * HAIKU_OUT)
+  // Attached images are read from the cache by everyone after the first person, so they add almost nothing here.
+  const stage1 = crowd * (2900 * HAIKU_IN + 300 * HAIKU_OUT)
   // Everyone opens the app at least once, on top of the activity-weighted turns each round.
-  const social = crowd * (0.15 * rounds + (rounds > 0 ? 0.4 : 0)) * (3550 * HAIKU_IN + 160 * HAIKU_OUT)
-  const interviews = crowd * (1300 * HAIKU_IN + 250 * HAIKU_OUT)
+  const social = crowd * (0.15 * rounds + (rounds > 0 ? 0.4 : 0)) * (3650 * HAIKU_IN + 160 * HAIKU_OUT)
+  const interviews = crowd * (1450 * HAIKU_IN + 330 * HAIKU_OUT)
   const analysts = devMode ? 13 * (6500 * HAIKU_IN + 900 * HAIKU_OUT) : 10 * (6500 * SONNET_IN + 900 * SONNET_OUT) + 1 * (13000 * SONNET_IN + 2000 * SONNET_OUT)
   // Research reads every search result (~120K tokens) on Haiku; the extraction runs on the analyst model.
   const market = marketScan ? 8 * SEARCH + 125000 * HAIKU_IN + 17000 * HAIKU_OUT + (devMode ? 6000 * HAIKU_IN + 2500 * HAIKU_OUT : 6000 * SONNET_IN + 2500 * SONNET_OUT) : 0

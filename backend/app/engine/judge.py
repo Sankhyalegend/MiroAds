@@ -281,7 +281,58 @@ def _pct(c: int, n: int) -> int:
     return round(c / n * 100) if n else 0
 
 
-def _interview_stats(agents: list[dict], interviews: dict[int, dict]) -> dict | None:
+def _nice(x: float) -> float:
+    return round(x) if x >= 10 else round(x, 2)
+
+
+def _price_test(ivs: list[dict], price: str | None) -> dict | None:
+    """Van Westendorp price sensitivity from the four price answers. The acceptable range runs from where 'too cheap'
+    meets 'getting expensive' to where 'bargain' meets 'too expensive'; the optimal price is where 'too cheap' meets
+    'too expensive'. Answers out of order (a bargain above too expensive) are left out, as is usual."""
+    pts = []
+    for iv in ivs:
+        p = iv.get("price") or {}
+        vals = [p.get(k) for k in ("tooCheap", "bargain", "gettingExpensive", "tooExpensive")]
+        if all(isinstance(x, (int, float)) and x > 0 for x in vals) and vals == sorted(vals):
+            pts.append(vals)
+    if not price or len(pts) < 10:
+        return None
+    A = np.array(pts, dtype=float)
+    grid = np.geomspace(A.min(), A.max(), 400)
+    falling = lambda col: (A[:, col][None, :] >= grid[:, None]).mean(axis=1)  # share for whom price p is still this cheap
+    rising = lambda col: (A[:, col][None, :] <= grid[:, None]).mean(axis=1)   # share for whom price p is already this dear
+
+    def meet(down: np.ndarray, up: np.ndarray) -> float:
+        hit = up >= down
+        return float(grid[int(np.argmax(hit))] if hit.any() else grid[-1])
+    too_cheap, bargain, expensive, too_dear = falling(0), falling(1), rising(2), rising(3)
+    lo, hi = sorted((meet(too_cheap, expensive), meet(bargain, too_dear)))
+    out = {"currency": re.sub(r"[\d,.\s]+", "", price) or "", "n": len(pts), "dropped": len(ivs) - len(pts),
+           "range": [_nice(lo), _nice(hi)], "optimal": _nice(meet(too_cheap, too_dear)), "indifference": _nice(meet(bargain, expensive))}
+    shown = float(m.group(0).replace(",", "")) if (m := re.search(r"\d[\d,]*(?:\.\d+)?", price)) else None
+    if shown:
+        out |= {"shown": _nice(shown), "tooExpensiveAtShown": _pct(int((A[:, 3] <= shown).sum()), len(pts)),
+                "bargainAtShown": _pct(int((A[:, 1] >= shown).sum()), len(pts))}
+    return out
+
+
+def _buying_stats(ivs: list[dict], price: str | None) -> dict:
+    """Purchase likelihood, choice share and the price test, from the questions added to the exit interview."""
+    lik = [iv["likelihood"] for iv in ivs if "likelihood" in iv]
+    if not lik:  # older runs
+        return {}
+    n = len(lik)
+    ch = Counter(iv.get("choice") for iv in ivs if "choice" in iv)
+    mean = float(np.mean(lik))
+    return {
+        "likelihood": {"mean": round(mean, 1), "expectedBuyers": round(mean * 10), "top2": _pct(sum(1 for x in lik if x >= 8), n),
+                       "dist": [sum(1 for x in lik if lo <= x <= hi) for lo, hi in ((0, 0), (1, 2), (3, 4), (5, 5), (6, 7), (8, 9), (10, 10))]},
+        "choice": {"this": _pct(ch["This one"], n), "alternative": _pct(ch["The alternative I named"], n), "neither": _pct(ch["Neither"], n)},
+        "price": _price_test(ivs, price),
+    }
+
+
+def _interview_stats(agents: list[dict], interviews: dict[int, dict], price: str | None = None) -> dict | None:
     rows = [(a, interviews[a["id"]]) for a in agents if a["id"] in interviews]
     if not rows:
         return None
@@ -309,6 +360,7 @@ def _interview_stats(agents: list[dict], interviews: dict[int, dict]) -> dict | 
         "themes": themes,
         "fixes": [{"text": f["text"], "count": f["count"]} for f in fixes],
         "quotes": quotes,
+        **_buying_stats([iv for _, iv in rows], price),
     }
 
 
@@ -355,14 +407,25 @@ def interview_summary(stats: dict) -> str:
     alts = ", ".join(f"{a['name']} ({a['count']})" for a in iv["alternatives"]) or "none named"
     themes = "\n".join(f"  {t['count']}x {t['text']}" for t in iv["themes"][:5])
     fixes = "; ".join(f"{f['text']} ({f['count']})" for f in iv["fixes"]) or "none"
+    buying = ""
+    if iv.get("likelihood"):
+        lk, ch, pr = iv["likelihood"], iv["choice"], iv.get("price")
+        buying = (f"\nPurchase likelihood (0-10, labelled): mean {lk['mean']}, so about {lk['expectedBuyers']}% expected to buy as stated (people overstate; "
+                  f"real conversion is usually far lower); {lk['top2']}% said 8-10. Choice today: this {ch['this']}%, their alternative {ch['alternative']}%, neither {ch['neither']}%.")
+        if pr:
+            c = pr["currency"]
+            buying += (f" Price test (n={pr['n']}): acceptable range {c}{pr['range'][0]}-{c}{pr['range'][1]}, optimal {c}{pr['optimal']}"
+                       + (f"; at the shown {c}{pr['shown']}, {pr['tooExpensiveAtShown']}% call it too expensive and {pr['bargainAtShown']}% a bargain." if "shown" in pr else "."))
     return (f"EXIT INTERVIEWS (n={iv['n']}, asked after the discussion; the intent split is what they said here): NPS {iv['nps']} "
             f"(promoters {iv['promoters']}%, detractors {iv['detractors']}%). Changed mind since first impression: more positive {iv['changedMind']['positive']}%, "
             f"more negative {iv['changedMind']['negative']}%. Versus what they use or know: better {iv['vsAlternatives']['better']}%, same {iv['vsAlternatives']['same']}%, "
-            f"worse {iv['vsAlternatives']['worse']}%, know none {iv['vsAlternatives']['unknown']}%. Alternatives they'd choose instead: {alts}.\n"
+            f"worse {iv['vsAlternatives']['worse']}%, know none {iv['vsAlternatives']['unknown']}%. Alternatives they'd choose instead: {alts}.{buying}\n"
             f"What they concluded (grouped):\n{themes}\nWhat would win the non-buyers over: {fixes}")
 
 
-def compute_stats(agents: list[dict], verdicts: dict[int, dict], final: dict[int, float], mind_changes: int, posts: list[dict], interviews: dict[int, dict] | None = None) -> dict:
+def compute_stats(agents: list[dict], verdicts: dict[int, dict], final: dict[int, float], mind_changes: int, posts: list[dict],
+                  interviews: dict[int, dict] | None = None, price: str | None = None) -> dict:
+    """`price` is the price the crowd saw (interview.price_shown), for the price test."""
     n = len(agents)
     interviews = interviews or {}
     fs = np.array([final.get(a["id"], verdicts.get(a["id"], {}).get("score", 5.0)) for a in agents], dtype=float)
@@ -431,7 +494,7 @@ def compute_stats(agents: list[dict], verdicts: dict[int, dict], final: dict[int
 
     agreement = round(max(0.0, 1 - sd / 3.2) * 100)
     return {
-        "n": n, "mean": mean, "sd": sd, "intent": intent, "intent_source": intent_source, "interviews": _interview_stats(agents, interviews), "attention": attention,
+        "n": n, "mean": mean, "sd": sd, "intent": intent, "intent_source": intent_source, "interviews": _interview_stats(agents, interviews, price), "attention": attention,
         "shift": float(fs.mean() - init.mean()), "mind_changes": mind_changes,
         "segments": segments, "objections": objections, "missing": missing, "top_objection": objections[0]["text"] if objections else "none",
         "best_segment": best, "worst_segment": worst, "agreement": agreement,
