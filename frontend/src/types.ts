@@ -23,7 +23,8 @@ export interface Stimulus {
   attachments?: Attachment[]
 }
 
-export interface Attachment { name: string; type: string; size: number; data?: string; text?: string }
+/** `originalSize`: an image's size before it was shrunk for upload (setup page only). */
+export interface Attachment { name: string; type: string; size: number; originalSize?: number; data?: string; text?: string }
 
 /** What is already on the market, from the market scan (web search on the live engine, simulated offline). */
 export interface MarketBrief {

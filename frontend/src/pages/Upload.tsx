@@ -40,7 +40,9 @@ const ROUND_CHOICES = [{ n: 3, label: 'Short' }, { n: 5, label: 'Normal' }, { n:
 // ---- files ----
 const MB = 1024 * 1024
 const MAX_FILES = 6
-const LIMIT = { image: 5 * MB, pdf: 10 * MB, text: 1 * MB }
+// Images have no size limit: they are shrunk in the browser first (shrinkImage), and only the shrunk copy is sent.
+const LIMIT: Record<'image' | 'pdf' | 'text', number> = { image: Infinity, pdf: 10 * MB, text: 1 * MB }
+const API_IMAGE_LIMIT = 5 * MB  // what the model accepts per image, checked after shrinking
 const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif,application/pdf,.pdf,.txt,.md,.csv,.json'
 type Kind = keyof typeof LIMIT
 function kindOf(f: File): Kind | null {
@@ -53,29 +55,37 @@ const fmtSize = (b: number) => b >= MB ? `${(b / MB).toFixed(1)} MB` : `${Math.m
 // Every person in the crowd looks at the images themselves, so each one travels with every first impression. The model
 // scales anything larger than this down anyway; shrinking first keeps a 100-person run from uploading hundreds of MB.
 const MAX_SIDE = 1568
-async function shrinkImage(dataUrl: string): Promise<string> {
-  const img = new window.Image()
-  await new Promise((ok, bad) => { img.onload = ok; img.onerror = bad; img.src = dataUrl })
-  const scale = Math.min(1, MAX_SIDE / Math.max(img.width, img.height))
-  if (scale === 1 && dataUrl.length < 0.4 * MB) return dataUrl  // ~300 KB file: small enough to send as is
-  const canvas = document.createElement('canvas')
-  canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale)
-  canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
-  const out = canvas.toDataURL('image/webp', 0.85)  // keeps transparency; browsers without WebP encoding return PNG
-  return out.length < dataUrl.length ? out : dataUrl
+const asDataUrl = (b: Blob) => new Promise<string>((ok, bad) => {
+  const r = new FileReader(); r.onload = () => ok(String(r.result)); r.onerror = () => bad(r.error); r.readAsDataURL(b)
+})
+async function shrinkImage(f: File): Promise<string> {
+  // Decoded from the file itself, so a 30 MB poster never becomes a 40 MB text string.
+  const url = URL.createObjectURL(f)
+  try {
+    const img = new window.Image()
+    await new Promise((ok, bad) => { img.onload = ok; img.onerror = bad; img.src = url })
+    const scale = Math.min(1, MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight))
+    if (scale === 1 && f.size < 0.3 * MB) return await asDataUrl(f)  // small enough to send as is
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.round(img.naturalWidth * scale); canvas.height = Math.round(img.naturalHeight * scale)
+    canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
+    // WebP keeps transparency; a browser that can't encode it hands back PNG, so fall back to JPEG there.
+    const webp = canvas.toDataURL('image/webp', 0.85)
+    const out = webp.startsWith('data:image/webp') ? webp : canvas.toDataURL('image/jpeg', 0.85)
+    const original = scale === 1 ? await asDataUrl(f) : null
+    return original && original.length < out.length ? original : out
+  } finally {
+    URL.revokeObjectURL(url)
+  }
 }
-function readFile(f: File, kind: Kind): Promise<Attachment> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader()
-    r.onerror = () => reject(new Error(`Couldn't read ${f.name}`))
-    r.onload = async () => {
-      if (kind === 'text') return resolve({ name: f.name, type: f.type || 'text/plain', size: f.size, text: String(r.result) })
-      if (kind === 'pdf') return resolve({ name: f.name, type: 'application/pdf', size: f.size, data: String(r.result) })
-      const data = await shrinkImage(String(r.result)).catch(() => String(r.result))
-      resolve({ name: f.name, type: data.slice(5, data.indexOf(';')), size: Math.round((data.length - data.indexOf(',') - 1) * 0.75), data })
-    }
-    if (kind === 'text') r.readAsText(f); else r.readAsDataURL(f)
-  })
+async function readFile(f: File, kind: Kind): Promise<Attachment> {
+  if (kind === 'text') return { name: f.name, type: f.type || 'text/plain', size: f.size, text: await f.text() }
+  if (kind === 'pdf') return { name: f.name, type: 'application/pdf', size: f.size, data: await asDataUrl(f) }
+  let data: string
+  try { data = await shrinkImage(f) } catch { throw new Error(`Couldn't open ${f.name} as an image`) }
+  const size = Math.round((data.length - data.indexOf(',') - 1) * 0.75)
+  if (size > API_IMAGE_LIMIT) throw new Error(`${f.name} is still over 5 MB after shrinking`)
+  return { name: f.name, type: data.slice(5, data.indexOf(';')), size, originalSize: f.size, data }
 }
 
 // ---- cost and time ----
@@ -265,7 +275,7 @@ export default function Upload() {
                 className={`rounded-xl border-2 border-dashed px-4 py-6 text-center cursor-pointer transition-colors ${dragging ? 'border-accent bg-accent/10' : 'border-line hover:border-accent/60 hover:bg-panel-2/50'}`}>
                 <UploadCloud size={26} className="mx-auto text-accent" />
                 <div className="mt-2 font-medium text-sm">Drop files here, or <span className="text-accent underline underline-offset-2">browse</span></div>
-                <div className="text-xs text-muted mt-1">Posters and screenshots, PDFs like a pitch deck or one-pager, or notes (.txt, .md). Up to {MAX_FILES} files: images 5 MB, PDFs 10 MB.</div>
+                <div className="text-xs text-muted mt-1">Posters and screenshots, PDFs like a pitch deck or one-pager, or notes (.txt, .md). Up to {MAX_FILES} files: images of any size (shrunk before upload), PDFs up to 10 MB.</div>
                 <input ref={fileInput} type="file" multiple accept={ACCEPT} className="hidden" onChange={e => { if (e.target.files) addFiles(e.target.files); e.target.value = '' }} />
               </div>
               {files.length > 0 && (
@@ -277,7 +287,10 @@ export default function Upload() {
                         : <div className="w-11 h-11 rounded-md bg-panel grid place-items-center text-muted shrink-0">{f.type === 'application/pdf' ? <FileText size={18} /> : <FileIcon size={18} />}</div>}
                       <div className="min-w-0 flex-1">
                         <div className="text-sm truncate" title={f.name}>{f.name}</div>
-                        <div className="text-[11px] text-muted">{f.type === 'application/pdf' ? 'PDF' : f.type.startsWith('image/') ? 'Image' : 'Note'} · {fmtSize(f.size)}</div>
+                        <div className="text-[11px] text-muted">
+                          {f.type === 'application/pdf' ? 'PDF' : f.type.startsWith('image/') ? 'Image' : 'Note'} · {fmtSize(f.size)}
+                          {f.originalSize && f.originalSize > f.size * 1.2 ? ` (shrunk from ${fmtSize(f.originalSize)})` : ''}
+                        </div>
                       </div>
                       <button aria-label={`Remove ${f.name}`} title="Remove" className="p-1.5 rounded-md text-muted hover:text-text hover:bg-panel" onClick={() => setFiles(files.filter((_, j) => j !== i))}><X size={14} /></button>
                     </div>
