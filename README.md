@@ -82,6 +82,15 @@ are persisted with a sequence number and streamed over `WS /runs/{id}/events?fro
 `scripts/calibrate_upworthy.py --csv <file>` tests the crowd against real behaviour: headline pairs from the
 [Upworthy Research Archive](https://osf.io/jd64p/) (real readers' clicks picked a clear winner) are shown to the same
 crowd of 50, and the script reports how often the crowd's click intent picks the real winner, against 50% for guessing.
+`--dry-run` lists the pairs and the cost first.
+
+First result (2026-10-25, 20 pairs with a clear real winner, crowds of 50 leaning US, Haiku 5.5, $0.53): the crowd
+picked the real winner 9 times in 20 (45%), no better than guessing. Its other answers did no better (stop chance
+8.5/20, score 10.5/20), and its click difference didn't track the real lift (correlation -0.04). Read the crowd for
+why people react (objections, segments, price, confusion), not to choose between two close headlines.
+
+Names: batch-built people repeat names far more than live ones; `--dedupe-names` fixes that in code for free
+(`generate.recombine_names` and `thin_family_names`).
 
 ## Cost (list price, Haiku 5.5 crowd)
 

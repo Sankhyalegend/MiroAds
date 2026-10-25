@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import heapq
 import random
+import re
 
 from .. import db
 from ..llm import Meter, llm
@@ -151,6 +153,161 @@ def overused_names(min_count: int = 2, version: int = FRAME_VERSION) -> dict[str
         if "_error" not in p["profile"]:
             by_country[p["skeleton"]["country"]][p["profile"]["name"]] += 1
     return {c: [n for n, k in cnt.most_common() if k >= min_count] for c, cnt in by_country.items()}
+
+
+# Countries whose names the model writes family name first (Japanese ones come given name first, as in English).
+# Elsewhere the family name comes last, with particles such as "Al" or "de" kept on it.
+FAMILY_FIRST = {"China", "South Korea", "Vietnam"}
+_PARTICLES = {"al", "el", "bin", "binti", "ibn", "abu", "de", "da", "do", "dos", "das", "del", "della", "di", "van", "von", "der", "den", "la", "le"}
+
+
+def split_name(name: str, country: str) -> tuple[str, str] | None:
+    """(given, family) as names are written in that country, or None for a one-word name."""
+    parts = name.split()
+    if len(parts) < 2:
+        return None
+    if country in FAMILY_FIRST:
+        return " ".join(parts[1:]), parts[0]
+    i = len(parts) - 1
+    while i > 1 and parts[i - 1].lower() in _PARTICLES:
+        i -= 1
+    return " ".join(parts[:i]), " ".join(parts[i:])
+
+
+def recombine_names(version: int = FRAME_VERSION, seed: int = 7) -> int:
+    """Renames everyone whose full name is already taken (the lowest id keeps it) by pairing a given name and a family name
+    that other people of the same country, and for given names the same gender, already have. Free and culturally
+    plausible. Batch-built people repeat names far more than live ones, since requests can't see each other: 14,403 of
+    the first 40,000, led by 106 'Dana Kowalczyk', and the model call per rename (dedupe_names) cost $0.24 per 1,000.
+    Each distinct name part is equally likely, so overused ones don't spread; parts used only once are left out (odd
+    one-offs), and a given name joins a gender's pool only if at least 80% of the people with it have that gender
+    (the model occasionally gave a man a woman's name). Returns renamed count."""
+    lib = sorted(db.all_personas(version), key=lambda p: p["id"])
+    given_by: dict[tuple[str, str], collections.Counter] = collections.defaultdict(collections.Counter)  # (country, given) -> genders
+    family_n: collections.Counter = collections.Counter()  # (country, family) -> people
+    position: dict[tuple[str, str], list[int]] = collections.defaultdict(lambda: [0, 0])  # (country, word) -> [as given, as family]
+    for p in lib:
+        c = p["skeleton"]["country"]
+        parts = split_name(p["profile"].get("name", ""), c)
+        if parts:
+            given_by[(c, parts[0])][p["skeleton"]["gender"]] += 1
+            family_n[(c, parts[1])] += 1
+            for i, part in enumerate(parts):
+                for word in part.split():
+                    position[(c, word)][i] += 1
+
+    def usually(c: str, part: str, i: int) -> bool:
+        """Every word of `part` usually sits in this position in that country's names (0 given, 1 family). The model
+        sometimes wrote Japanese or Vietnamese names in the other order, which would put a family name first."""
+        return all(position[(c, w)][i] >= 0.7 * sum(position[(c, w)]) for w in part.split())
+    givens: dict[tuple[str, str], list[str]] = collections.defaultdict(list)
+    any_given: dict[str, list[str]] = collections.defaultdict(list)
+    for (c, g), genders in sorted(given_by.items()):
+        total = sum(genders.values())
+        if total < 2 or not usually(c, g, 0):
+            continue
+        any_given[c].append(g)
+        for gender, k in genders.items():
+            if k / total >= 0.8:
+                givens[(c, gender)].append(g)
+    families: dict[str, list[str]] = collections.defaultdict(list)
+    for (c, f), k in sorted(family_n.items()):
+        if k >= 2 and usually(c, f, 1):
+            families[c].append(f)
+    rng = random.Random(seed)
+    taken: set[str] = set()
+    updates: list[tuple[int, dict]] = []
+    for p in lib:
+        old = p["profile"].get("name", "").strip()
+        if old.lower() not in taken:
+            taken.add(old.lower())
+            continue
+        sk = p["skeleton"]
+        c = sk["country"]
+        pool = givens.get((c, sk["gender"])) or any_given.get(c)  # non-binary people: any given name from their country
+        if not pool or not families.get(c):
+            continue
+        for _ in range(100):
+            g, f = rng.choice(pool), rng.choice(families[c])
+            new = f"{f} {g}" if c in FAMILY_FIRST else f"{g} {f}"
+            if new.lower() not in taken:
+                break
+        else:
+            continue
+        taken.add(new.lower())
+        prof = dict(p["profile"], name=new)
+        # Backstories are first person and rarely name the speaker, but keep them consistent if they do.
+        old_given = (split_name(old, c) or (old, ""))[0]
+        story = re.sub(rf"\b{re.escape(old)}\b", new, prof.get("backstory", ""))
+        prof["backstory"] = re.sub(rf"\b(I'm|I am|my name is|My name is|name's)\s+{re.escape(old_given)}\b", rf"\1 {g}", story)
+        updates.append((p["id"], prof))
+    db.update_persona_profiles(updates)
+    return len(updates)
+
+
+# Where a few family names really are very common (Silva, Hernández), the cap on any one name is higher.
+FAMILY_CAP = {"Brazil": 0.02, "Mexico": 0.02}
+
+
+def thin_family_names(version: int = FRAME_VERSION, cap_share: float = 0.005, seed: int = 11) -> int:
+    """After recombine_names: no family name may cover more than `cap_share` of a country's people (FAMILY_CAP where
+    higher; at least 5 holders). Batch generation fixated on a few (Pruitt, Kowalczyk, Halvorsen and Lindqvist were
+    the four commonest US family names, 1.4-2.1% each; invented double names such as Okonkwo-Adeyemi covered 7% of
+    Nigerians), while real top family names sit near 0.5-1%. Countries that write the family name first are left alone:
+    there a few names really dominate (Nguyen, Kim, Wang). Extra holders keep their given name and get another family
+    name of their country with at least two holders, never a hyphenated one; the parts of hyphenated names count as
+    names of their own (Okonkwo, Adeyemi). Returns how many were changed."""
+    lib = sorted(db.all_personas(version), key=lambda p: p["id"])
+    taken = {p["profile"].get("name", "").strip().lower() for p in lib}
+    by_country: dict[str, list[tuple[dict, str, str]]] = collections.defaultdict(list)
+    for p in lib:
+        c = p["skeleton"]["country"]
+        parts = split_name(p["profile"].get("name", ""), c)
+        if parts and c not in FAMILY_FIRST:
+            by_country[c].append((p, parts[0], parts[1]))
+    rng = random.Random(seed)
+    updates: list[tuple[int, dict]] = []
+    for c, people in sorted(by_country.items()):
+        cap = max(5, round(FAMILY_CAP.get(c, cap_share) * len(people)))
+        count = collections.Counter(f for _, _, f in people)
+        holders: collections.Counter = collections.Counter()
+        for f, k in count.items():
+            for part in f.split("-"):
+                if len(part) > 1 and part[0].isupper():
+                    holders[part] += k
+        # Least-used names first, so overflow spreads evenly; in small countries (Kenya has 373 people) there aren't
+        # enough distinct names to get everyone under the cap, and this keeps the commonest as rare as the names allow.
+        heap = [(count[f], rng.random(), f) for f, k in sorted(holders.items()) if k >= 2 and "-" not in f]
+        heapq.heapify(heap)
+        kept: collections.Counter = collections.Counter()
+        for p, g, f in people:
+            kept[f] += 1
+            if kept[f] <= cap or not heap:
+                continue
+            skipped, nf = [], None
+            while heap and len(skipped) < 20:
+                k, t, x = heapq.heappop(heap)
+                if k != count[x]:  # stale entry
+                    heapq.heappush(heap, (count[x], t, x)); continue
+                if k + 1 >= count[f]:  # moving wouldn't even things out
+                    skipped.append((k, t, x)); break
+                if f"{g} {x}".lower() in taken:
+                    skipped.append((k, t, x)); continue
+                nf = x
+                break
+            for item in skipped:
+                heapq.heappush(heap, item)
+            if nf is None:
+                continue
+            new = f"{g} {nf}"
+            old = p["profile"]["name"]
+            taken.add(new.lower()); count[nf] += 1; count[f] -= 1
+            heapq.heappush(heap, (count[nf], rng.random(), nf))
+            prof = dict(p["profile"], name=new)
+            prof["backstory"] = re.sub(rf"\b{re.escape(old)}\b", new, prof.get("backstory", ""))
+            updates.append((p["id"], prof))
+    db.update_persona_profiles(updates)
+    return len(updates)
 
 
 NAME_SCHEMA = {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"], "additionalProperties": False}

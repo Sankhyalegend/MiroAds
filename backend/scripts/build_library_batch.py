@@ -26,7 +26,7 @@ from app import db  # noqa: E402
 from app.config import PRICING, settings  # noqa: E402
 from app.llm import Meter, json_request  # noqa: E402
 from app.personas.frame import FRAME_VERSION, sample_skeleton  # noqa: E402
-from app.personas.generate import PROFILE_SCHEMA, SYSTEM, dedupe_names, fake_profile, generate_batch, profile_prompt, tidy  # noqa: E402
+from app.personas.generate import PROFILE_SCHEMA, SYSTEM, fake_profile, generate_batch, profile_prompt, recombine_names, tidy  # noqa: E402
 
 STATE = settings.db_path.parent / "batches.json"
 
@@ -103,7 +103,7 @@ async def main() -> None:
     ap.add_argument("--batch", type=int, default=10000, help="requests per batch")
     ap.add_argument("--pilot", type=int, default=20, help="people written live first, to check output and measure cost")
     ap.add_argument("--budget", type=float, default=7.5, help="USD cap for this build (pilot + batches), checked before each batch")
-    ap.add_argument("--dedupe-names", action="store_true", help="afterwards, rename people whose name is already taken (live, tiny calls)")
+    ap.add_argument("--dedupe-names", action="store_true", help="afterwards, rename people whose name is already taken (in code, free)")
     a = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")  # names and currencies in the pilot example
     if settings.effective_provider != "anthropic":
@@ -151,10 +151,8 @@ async def main() -> None:
         per_person = b["cost"] / max(1, b["stored"])
 
     if a.dedupe_names:
-        meter = Meter(budget_usd=1e9)
-        renamed = await dedupe_names(meter, progress=lambda done, total, cost: print(f"renamed {done}/{total}  ${cost:.3f}", flush=True))
-        spent += meter.cost_usd
-        print(f"renamed {renamed} repeated names for ${meter.cost_usd:.3f}", flush=True)
+        # In code, not with a model call per name: the first build had 14,403 repeats, which would have cost ~$3.50 that way.
+        print(f"renamed {recombine_names()} repeated names (free, from names already used in each country)", flush=True)
     print(f"done: library v{FRAME_VERSION} has {db.persona_count(FRAME_VERSION)} people. this build ${spent:.3f}", flush=True)
 
 

@@ -134,6 +134,19 @@ def update_persona_profile(pid: int, profile: dict) -> None:
     x("UPDATE personas SET profile=? WHERE id=?", (j(profile), pid))
 
 
+def update_persona_profiles(rows: list[tuple[int, dict]]) -> None:
+    """Many profile updates in one transaction (thousands of single-statement commits are slow)."""
+    with _lock:
+        c = conn()
+        c.execute("BEGIN")
+        try:
+            c.executemany("UPDATE personas SET profile=? WHERE id=?", [(j(pr), pid) for pid, pr in rows])
+            c.execute("COMMIT")
+        except Exception:
+            c.execute("ROLLBACK")
+            raise
+
+
 def all_personas(version: int | None = None) -> list[dict]:
     rows = q("SELECT * FROM personas") if version is None else q("SELECT * FROM personas WHERE version=?", (version,))
     return [{"id": r["id"], "skeleton": uj(r["skeleton"]), "profile": uj(r["profile"])} for r in rows]

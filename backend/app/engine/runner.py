@@ -45,7 +45,8 @@ def same_crowd(source_id: str) -> tuple[list[dict], dict, dict]:
     crowd = []
     for r in rows:
         a = {k: v for k, v in r.items() if k not in ("verdict", "finalScore", "actions", "context", "interview")}
-        a["_sk"], a["_profile"] = people[a["personaId"]]["skeleton"], people[a["personaId"]]["profile"]
+        # The name they had in that run, in case the library renamed them since (generate.recombine_names).
+        a["_sk"], a["_profile"] = people[a["personaId"]]["skeleton"], {**people[a["personaId"]]["profile"], "name": r["name"]}
         if r.get("context"):
             a["_market"] = r["context"]
             if r["context"].get("moodReason"):

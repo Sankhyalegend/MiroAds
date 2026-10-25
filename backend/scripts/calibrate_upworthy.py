@@ -76,9 +76,9 @@ def headline_pairs(path: Path, min_impressions: int, min_z: float, min_lift: flo
     return pairs
 
 
-async def judge_arm(headline: str, crowd: list[dict], seed: int, meter: Meter) -> dict:
+async def judge_arm(headline: str, crowd: list[dict], seed: int, meter: Meter, audience: str) -> dict:
     """One headline, shown to the crowd as a story link they come across; returns click intent and stop rate."""
-    stim = {"type": "creative", "title": headline, "brief": f"A story link with a picture. Headline: \"{headline}\"", "targetAudience": "general public"}
+    stim = {"type": "creative", "title": headline, "brief": f"A story link with a picture. Headline: \"{headline}\"", "targetAudience": audience}
     system = stage1_system(stim)
 
     async def one(a: dict) -> dict:
@@ -107,6 +107,9 @@ async def main() -> None:
     ap.add_argument("--min-lift", type=float, default=0.3, help="winner's click rate at least this much higher (0.3 = 30%)")
     ap.add_argument("--budget", type=float, default=1.5)
     ap.add_argument("--seed", type=int, default=2026)
+    ap.add_argument("--dry-run", action="store_true", help="list the pairs and the estimated cost without calling the API")
+    # Upworthy's tests ran on its (mostly American) readers, so the crowd leans US the way a test's audience would.
+    ap.add_argument("--audience", default="US readers of social news stories")
     a = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
 
@@ -114,18 +117,25 @@ async def main() -> None:
     pairs = random.Random(a.seed).sample(pool, min(a.pairs, len(pool)))
     print(f"{len(pool)} clear headline pairs in the archive; testing {len(pairs)} on crowds of {a.crowd} "
           f"(provider {settings.effective_provider}, model {settings.model_for('crowd')})", flush=True)
+    if a.dry_run:
+        for i, p in enumerate(pairs):
+            print(f"{i + 1:2}. real lift +{p['lift']:.0%} (z {p['z']}, {p['winner']['impressions']:,} and {p['loser']['impressions']:,} viewers)\n"
+                  f"      W: {p['winner']['headline'][:110]}\n      L: {p['loser']['headline'][:110]}")
+        # About $0.00027 per first impression on Haiku 5.5 (live runs), two headlines per pair.
+        print(f"estimated cost ${len(pairs) * 2 * a.crowd * 0.00027:.2f}")
+        return
     lib = village()
     meter = Meter(budget_usd=a.budget)
     results, hits = [], 0.0
     for i, p in enumerate(pairs):
         seed = a.seed * 1000 + i
-        crowd = sample_crowd(lib, a.crowd, "", seed, load=db.personas_by_ids)
+        crowd = sample_crowd(lib, a.crowd, a.audience, seed, load=db.personas_by_ids)
         people = db.personas_by_ids([c["personaId"] for c in crowd])
         for c in crowd:
             c["_sk"], c["_profile"] = people[c["personaId"]]["skeleton"], people[c["personaId"]]["profile"]
         # Separate calls with no memory, so neither headline is seen "second".
         try:
-            w, l = await asyncio.gather(judge_arm(p["winner"]["headline"], crowd, seed, meter), judge_arm(p["loser"]["headline"], crowd, seed, meter))
+            w, l = await asyncio.gather(judge_arm(p["winner"]["headline"], crowd, seed, meter, a.audience), judge_arm(p["loser"]["headline"], crowd, seed, meter, a.audience))
         except BudgetExceeded as e:
             print(f"stopping early: {e}", flush=True)
             break
@@ -140,7 +150,7 @@ async def main() -> None:
     lifts = [r["lift"] for r in results]
     crowd_lifts = [r["crowd"]["winner"]["click"] - r["crowd"]["loser"]["click"] for r in results]
     summary = {"pairs": n, "hits": hits, "hitRate": round(hits / n, 3) if n else None, "pGuessing": round(binomial_p(hits, n), 4) if n else None,
-               "crowd": a.crowd, "costUsd": round(meter.cost_usd, 3), "model": settings.model_for("crowd"), "csv": a.csv.name,
+               "crowd": a.crowd, "audience": a.audience, "costUsd": round(meter.cost_usd, 3), "model": settings.model_for("crowd"), "csv": a.csv.name,
                "meanCrowdLift": round(sum(crowd_lifts) / n, 3) if n else None, "meanRealLift": round(sum(lifts) / n, 3) if n else None}
     out = settings.db_path.parent / "calibration-upworthy.json"
     out.write_text(json.dumps({"summary": summary, "pairs": results}, indent=1, ensure_ascii=False), encoding="utf-8")
