@@ -1,11 +1,13 @@
-"""Draw a crowd for one run from the library: stratified, audience-weighted, with forced edges,
-reproducible by seed. Also assigns each agent a mood for today."""
+"""Draw a crowd for one run from the library: stratified, audience-weighted, with forced edges, drawn from the people
+tested least so far, reproducible by seed. Also assigns each agent a mood for today."""
 from __future__ import annotations
 
+import heapq
 import random
 import re
 from collections import defaultdict
 from functools import lru_cache
+from typing import Callable
 
 from .frame import COUNTRIES, INCOME, IDEOLOGY, MOODS, PROFESSION_GROUPS, to_frontend_persona
 
@@ -87,35 +89,52 @@ def is_outsider(sk: dict, audience: str) -> bool:
     return sk["tech"] in ("Laggard", "Late majority") and _audience_weight(sk, audience) <= 1.0
 
 
-def sample_crowd(library: list[dict], n: int, audience: str, seed: int) -> list[dict]:
-    """Returns frontend-shaped personas with agent ids 0..n-1."""
+def least_used(library: list[dict], use_counts: dict[int, int], n: int) -> list[dict]:
+    """People who have been in the fewest tests. Everyone new comes first; once fewer than 3n new people are left,
+    those tested once join them, and so on, so the village cycles and nobody repeats until it is used up.
+    The 3n margin leaves the sampler room for its floors and audience weighting."""
+    by_uses: dict[int, list[dict]] = defaultdict(list)
+    for p in library:
+        by_uses[use_counts.get(p["id"], 0)].append(p)
+    pool: list[dict] = []
+    for k in sorted(by_uses):
+        pool += by_uses[k]
+        if len(pool) >= 3 * n:
+            break
+    return pool
+
+
+def sample_crowd(library: list[dict], n: int, audience: str, seed: int,
+                 use_counts: dict[int, int] | None = None, load: Callable[[list[int]], dict[int, dict]] | None = None) -> list[dict]:
+    """Returns frontend-shaped personas with agent ids 0..n-1. With `use_counts` (persona id -> tests so far) the crowd comes from
+    the least-tested people. `library` may hold only sampling attributes; `load` then fetches the full people drawn."""
     rng = random.Random(seed)
     if not library:
         return []
     n = min(n, len(library))
+    uses = use_counts or {}
+    if uses:
+        library = least_used(library, uses, n)
+    fewest = min(uses.get(p["id"], 0) for p in library)
+    # Audience weight depends on four attributes only, so it is computed once per combination, not once per person.
+    aud_w: dict[tuple, float] = {}
+    weight: dict[int, float] = {}
+    for p in library:
+        sk = p["skeleton"]
+        key = (sk["professionGroup"], sk["ageBand"], sk["economic"], sk["country"])
+        if key not in aud_w:
+            aud_w[key] = _audience_weight(sk, audience)
+        # People tested more often than the rest of the pool are picked only when the floors need them.
+        weight[p["id"]] = aud_w[key] * (0.1 if uses.get(p["id"], 0) > fewest else 1.0)
     chosen: list[dict] = []
     used: set[int] = set()
 
-    def take(pool: list[dict], k: int, weighted: bool = True):
+    def take(pool: list[dict], k: int):
         pool = [p for p in pool if p["id"] not in used]
         if not pool or k <= 0:
             return
-        if weighted:
-            ws = [_audience_weight(p["skeleton"], audience) for p in pool]
-            picks = []
-            # weighted sampling without replacement
-            idx = list(range(len(pool)))
-            for _ in range(min(k, len(pool))):
-                tot = sum(ws[i] for i in idx)
-                r = rng.random() * tot
-                acc = 0.0
-                for j, i in enumerate(idx):
-                    acc += ws[i]
-                    if r <= acc:
-                        picks.append(pool[i]); idx.pop(j); break
-        else:
-            picks = rng.sample(pool, min(k, len(pool)))
-        for p in picks:
+        # Weighted sampling without replacement (Efraimidis-Spirakis): one pass, fast on a 40,000-person village.
+        for p in heapq.nlargest(k, pool, key=lambda p: rng.random() ** (1.0 / weight[p["id"]])):
             used.add(p["id"]); chosen.append(p)
 
     # 1. Minimum coverage: every profession group, income band and ideology gets a floor.
@@ -145,6 +164,7 @@ def sample_crowd(library: list[dict], n: int, audience: str, seed: int) -> list[
             return
         pool = [p for p in library if p["id"] not in used and pred(p["skeleton"])]
         rng.shuffle(pool)
+        pool.sort(key=lambda p: uses.get(p["id"], 0))  # least-tested first, random within each
         for newp in pool[:need]:
             counts = defaultdict(int)
             for p in chosen:
@@ -161,10 +181,12 @@ def sample_crowd(library: list[dict], n: int, audience: str, seed: int) -> list[
     enforce_floor(lambda sk: is_outsider(sk, audience), OUTSIDER_FLOOR)
     rng.shuffle(chosen)
 
+    full = load([p["id"] for p in chosen]) if load else {p["id"]: p for p in chosen}
     out = []
     for i, p in enumerate(chosen):
         mood = rng.choice(MOODS)
-        out.append(to_frontend_persona(i, p["id"], p["skeleton"], p["profile"], mood))
+        f = full[p["id"]]
+        out.append(to_frontend_persona(i, p["id"], f["skeleton"], f["profile"], mood))
     return out
 
 
@@ -176,10 +198,13 @@ def composition(personas: list[dict]) -> dict:
             v = p[key] if sub is None else p[sub][key]
             d[str(v)] += 1
         return dict(sorted(d.items(), key=lambda kv: -kv[1]))
-    return {
+    out = {
         "n": len(personas),
         "professionGroup": count("professionGroup"), "income": count("income"), "ideology": count("ideology"),
         "ageBand": count("ageBand"), "tech": count("tech"), "role": count("role"), "country": count("region"),
         "gdpTier": count("gdpTier", "extra"), "trust": count("trust", "extra"), "temperament": count("temperament", "extra"),
         "mood": count("mood"),
     }
+    if personas and "lifeStage" in personas[0]["extra"]:  # version 2 people
+        out |= {k: count(k, "extra") for k in ("lifeStage", "settlement", "adReceptivity")}
+    return out

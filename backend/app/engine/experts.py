@@ -7,7 +7,7 @@ import random
 from ..llm import Meter, llm
 from .banks import KPI_HINTS, RESEARCH_TEAM
 from .events import bus
-from .judge import interview_summary
+from .judge import attention_summary, interview_summary
 from .market import market_summary
 from .stimulus import stimulus_block
 
@@ -62,7 +62,7 @@ async def run_experts(run_id: str, stimulus: dict, stats: dict, top_posts: list[
     data = (f"CROWD RESULTS (n={stats['n']}):\n- Mean score {stats['mean']:.2f}/10, std-dev {stats['sd']:.2f}; intent buy/maybe/no = {stats['intent']['buy']}/{stats['intent']['maybe']}/{stats['intent']['no']}% (stated, from {stats['intent_source']})\n"
             f"- Opinion shift during discussion: {stats['shift']:+.2f}; mind changes: {stats['mind_changes']}\n- Segment scores:\n{seg}\n- Top objections:\n{obj}\n"
             f"- Most cited missing items: {', '.join(stats['missing'][:5])}\n- Most discussed posts:\n{posts_txt}\n"
-            f"- KPI families typical for this stimulus type: {KPI_HINTS[stimulus['type']]}\n\n{interview_summary(stats)}\n\n{market_summary(market)}")
+            f"- KPI families typical for this stimulus type: {KPI_HINTS[stimulus['type']]}\n\n{interview_summary(stats)}\n\n{attention_summary(stats)}\n\n{market_summary(market)}")
     results: list[dict] = []
 
     async def one(expert: dict):

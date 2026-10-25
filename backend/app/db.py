@@ -80,6 +80,9 @@ def conn() -> sqlite3.Connection:
         _conn.execute("PRAGMA synchronous=NORMAL")
         _conn.executescript(SCHEMA)
         _add_missing_columns(_conn, "run_agents", {"context": "TEXT", "interview": "TEXT"})
+        # Which version of personas/frame.py built each person. The first library predates the column.
+        _add_missing_columns(_conn, "personas", {"version": "INTEGER NOT NULL DEFAULT 1"})
+        _conn.execute("CREATE INDEX IF NOT EXISTS personas_version ON personas(version)")
     return _conn
 
 
@@ -115,22 +118,53 @@ def uj(s: str | None, default: Any = None) -> Any:
 
 
 # ---- personas ----
-def persona_count() -> int:
-    return q("SELECT COUNT(*) c FROM personas")[0]["c"]
+def persona_count(version: int | None = None) -> int:
+    if version is None:
+        return q("SELECT COUNT(*) c FROM personas")[0]["c"]
+    return q("SELECT COUNT(*) c FROM personas WHERE version=?", (version,))[0]["c"]
 
 
 def insert_personas(rows: list[tuple[int, dict, dict]]) -> None:
     now = time.time()
-    xmany("INSERT INTO personas(seed, skeleton, profile, created_at) VALUES (?,?,?,?)",
-          [(seed, j(sk), j(pr), now) for seed, sk, pr in rows])
+    xmany("INSERT INTO personas(seed, skeleton, profile, created_at, version) VALUES (?,?,?,?,?)",
+          [(seed, j(sk), j(pr), now, sk.get("v", 1)) for seed, sk, pr in rows])
 
 
 def update_persona_profile(pid: int, profile: dict) -> None:
     x("UPDATE personas SET profile=? WHERE id=?", (j(profile), pid))
 
 
-def all_personas() -> list[dict]:
-    return [{"id": r["id"], "skeleton": uj(r["skeleton"]), "profile": uj(r["profile"])} for r in q("SELECT * FROM personas")]
+def all_personas(version: int | None = None) -> list[dict]:
+    rows = q("SELECT * FROM personas") if version is None else q("SELECT * FROM personas WHERE version=?", (version,))
+    return [{"id": r["id"], "skeleton": uj(r["skeleton"]), "profile": uj(r["profile"])} for r in rows]
+
+
+# What the crowd sampler looks at. Keeping only these makes a 40,000-person village a few MB in memory instead of hundreds.
+SAMPLING_KEYS = ("professionGroup", "income", "ideology", "ageBand", "economic", "country", "temperament", "tech")
+
+
+def library_index(version: int | None = None) -> list[dict]:
+    """Every person's id and sampling attributes; full records are loaded only for the people drawn (personas_by_ids)."""
+    rows = q("SELECT id, skeleton FROM personas") if version is None else q("SELECT id, skeleton FROM personas WHERE version=?", (version,))
+    out = []
+    for r in rows:
+        sk = json.loads(r["skeleton"])
+        out.append({"id": r["id"], "skeleton": {k: sk[k] for k in SAMPLING_KEYS}})
+    return out
+
+
+def personas_by_ids(ids: list[int]) -> dict[int, dict]:
+    out: dict[int, dict] = {}
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        for r in q(f"SELECT * FROM personas WHERE id IN ({','.join('?' * len(chunk))})", chunk):
+            out[r["id"]] = {"id": r["id"], "skeleton": uj(r["skeleton"]), "profile": uj(r["profile"])}
+    return out
+
+
+def persona_use_counts() -> dict[int, int]:
+    """How many tests each person has been in, so new runs can draw people who haven't been tested yet."""
+    return {r["persona_id"]: r["c"] for r in q("SELECT persona_id, COUNT(*) c FROM run_agents GROUP BY persona_id")}
 
 
 # ---- stimuli / runs ----

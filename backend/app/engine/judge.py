@@ -100,13 +100,14 @@ def _themes(items: list[tuple[str, float, str]], max_themes: int = 6) -> list[di
         return []
     texts = [t for t, _, _ in items]
     groups, X = _ward_groups(texts, max_themes)
-    out = []
+    by_label: dict[str, dict] = {}  # groups labelled with the same answer are one theme
     for members in groups:
         rep = _medoid(members, X)
         top = sorted(members, key=lambda i: -items[i][1])[:3]
-        out.append({"text": texts[rep], "agent": items[rep][2], "count": len(members), "quotes": [{"agent": items[i][2], "text": texts[i]} for i in top]})
-    out.sort(key=lambda o: -o["count"])
-    return out[:max_themes]
+        t = by_label.setdefault(texts[rep], {"text": texts[rep], "agent": items[rep][2], "count": 0, "quotes": []})
+        t["count"] += len(members)
+        t["quotes"] = (t["quotes"] + [{"agent": items[i][2], "text": texts[i]} for i in top])[:3]
+    return sorted(by_label.values(), key=lambda o: -o["count"])[:max_themes]
 
 
 def _who(a: dict) -> str:
@@ -172,6 +173,7 @@ _THEME_KINDS = {
     "takeaways": "what each person concluded once the discussion was over",
     "fixes": "the one change that would win each person over",
     "alternatives": "what each person would compare it with or choose instead (put the same product or habit together)",
+    "glance": "what each person took in within the first two seconds of seeing it",
 }
 
 
@@ -222,13 +224,15 @@ async def group_by_meaning(stats: dict, agents: list[dict], verdicts: dict[int, 
     matching can't group answers this short: on a live run it led with a vague catch-all and showed price (40% of
     objections by keyword) as 14 of 87, and counted "my existing ScreenBar" and "ScreenBar I already own" apart.
     Any list the model can't sort (offline provider, error, skipped answers) keeps its word-based groups."""
-    kinds = ["objections"] + (["takeaways", "fixes", "alternatives"] if interviews and stats.get("interviews") else [])
+    kinds = ["objections"] + (["takeaways", "fixes", "alternatives"] if interviews and stats.get("interviews") else []) + (["glance"] if stats.get("attention") else [])
     stats["grouped_by"] = {k: "word matching" for k in kinds}
     if llm().provider == "fake":
         return
     jobs = {"objections": _objection_items(agents, verdicts, final)}
-    if len(kinds) > 1:
+    if "takeaways" in kinds:
         jobs |= {"takeaways": _takeaway_items(agents, interviews), "fixes": _fix_items(agents, interviews), "alternatives": _alternative_items(agents, interviews)}
+    if "glance" in kinds:
+        jobs["glance"] = _glance_items(agents, verdicts)
     results = await asyncio.gather(*(_model_groups(items, kind, stimulus, meter) for kind, items in jobs.items()), return_exceptions=True)
     other_last = lambda o: o["text"].lower() == "other"
     for (kind, items), groups in zip(jobs.items(), results):
@@ -244,6 +248,8 @@ async def group_by_meaning(stats: dict, agents: list[dict], verdicts: dict[int, 
             stats["interviews"]["themes"] = sorted(out, key=lambda o: (other_last(o), -o["count"]))[:6]
         elif kind == "fixes":
             stats["interviews"]["fixes"] = [{"text": o["text"], "count": o["count"]} for o in sorted(out, key=lambda o: (other_last(o), -o["count"]))[:5]]
+        elif kind == "glance":
+            stats["attention"]["glance"] = sorted(out, key=lambda o: (other_last(o), -o["count"]))[:5]
         else:
             stats["interviews"]["alternatives"] = [{"name": o["text"], "count": o["count"]} for o in sorted(out, key=lambda o: -o["count"]) if not other_last(o)][:6]
 
@@ -306,6 +312,41 @@ def _interview_stats(agents: list[dict], interviews: dict[int, dict]) -> dict | 
     }
 
 
+def _glance_items(agents: list[dict], verdicts: dict[int, dict]) -> list[tuple[str, float, str]]:
+    """What people took in within two seconds, from those who stopped."""
+    return [(v["two_second_takeaway"], a["influence"], _who(a)) for a in agents if (v := verdicts.get(a["id"])) and v.get("noticed")
+            and v.get("two_second_takeaway", "").strip().lower().rstrip(".") not in ("nothing", "none", "")]
+
+
+def _attention_stats(agents: list[dict], verdicts: dict[int, dict]) -> dict | None:
+    """Would they have stopped, would they click, by where they met it. None for business ideas and older runs."""
+    rows = [(a, v) for a in agents if (v := verdicts.get(a["id"])) and "noticed" in v]
+    if not rows:
+        return None
+    n = len(rows)
+    clicks = Counter(v.get("would_click", "No") for _, v in rows)
+    by_place: dict[str, list[int]] = defaultdict(lambda: [0, 0, 0])
+    for _, v in rows:
+        b = by_place[v.get("placement", "Unknown")]
+        b[0] += 1; b[1] += bool(v["noticed"]); b[2] += v.get("would_click") == "Yes"
+    return {
+        "n": n, "stopRate": _pct(sum(1 for _, v in rows if v["noticed"]), n),
+        "click": {"yes": _pct(clicks["Yes"], n), "maybe": _pct(clicks["Maybe"], n), "no": _pct(clicks["No"], n)},
+        "byPlacement": sorted(({"placement": p, "n": c[0], "stopRate": _pct(c[1], c[0]), "clickRate": _pct(c[2], c[0])} for p, c in by_place.items()), key=lambda x: -x["n"]),
+        "glance": _themes(_glance_items(agents, verdicts), max_themes=5),
+    }
+
+
+def attention_summary(stats: dict) -> str:
+    at = stats.get("attention")
+    if not at:
+        return ""
+    places = "; ".join(f"{p['placement']}: {p['stopRate']}% stop, {p['clickRate']}% click (n={p['n']})" for p in at["byPlacement"][:8])
+    glance = "; ".join(f"{g['text']} ({g['count']})" for g in at["glance"][:5]) or "nothing clear"
+    return (f"ATTENTION (each person met it where they usually meet ads): {at['stopRate']}% would have stopped scrolling; would click yes {at['click']['yes']}%, "
+            f"maybe {at['click']['maybe']}%. By placement: {places}. What those who stopped took in within 2 seconds: {glance}.")
+
+
 def interview_summary(stats: dict) -> str:
     """Exit-interview results as text for the research team and the report author."""
     iv = stats.get("interviews")
@@ -332,16 +373,29 @@ def compute_stats(agents: list[dict], verdicts: dict[int, dict], final: dict[int
     buy, no = stated.count("Would buy/use"), stated.count("Would not")
     intent = {"buy": _pct(buy, n), "maybe": _pct(n - buy - no, n), "no": _pct(no, n)}
     buys = {a["id"]: x == "Would buy/use" for a, x in zip(agents, stated)}
+    attention = _attention_stats(agents, verdicts)
 
     def seg(group: str, key):
-        m: dict[str, list[tuple[float, bool]]] = defaultdict(list)
+        m: dict[str, list[tuple[float, bool, dict]]] = defaultdict(list)
         for a, s in zip(agents, fs):
-            m[str(key(a))].append((float(s), buys[a["id"]]))
-        return [{"segment": k, "group": group, "score": round(float(np.mean([s for s, _ in v])), 1), "n": len(v), "intent": _pct(sum(b for _, b in v), len(v))} for k, v in m.items()]
+            m[str(key(a))].append((float(s), buys[a["id"]], verdicts.get(a["id"]) or {}))
+        out = []
+        for k, v in m.items():
+            row = {"segment": k, "group": group, "score": round(float(np.mean([s for s, _, _ in v])), 1), "n": len(v), "intent": _pct(sum(b for _, b, _ in v), len(v))}
+            if attention:  # stop rate and click intent per segment
+                row |= {"stop": _pct(sum(1 for *_, x in v if x.get("noticed")), len(v)), "click": _pct(sum(1 for *_, x in v if x.get("would_click") == "Yes"), len(v))}
+            out.append(row)
+        return out
+    groups = [("Profession", lambda a: a["professionGroup"]), ("Ideology", lambda a: a["ideology"]), ("Income", lambda a: a["income"]), ("Age", lambda a: a["ageBand"]),
+              ("Tech adoption", lambda a: a["tech"]), ("Role", lambda a: a["role"]), ("Country GDP tier", lambda a: a["extra"]["gdpTier"]), ("Trust posture", lambda a: a["extra"]["trust"]),
+              ("Decision heuristic", lambda a: a["extra"]["heuristic"]), ("Temperament", lambda a: a["extra"]["temperament"]), ("Mood today", lambda a: a["mood"])]
+    if attention:
+        groups.append(("Where they saw it", lambda a: (verdicts.get(a["id"]) or {}).get("placement", "Unknown")))
+    if agents and "lifeStage" in agents[0]["extra"]:  # people from the current library
+        groups += [("Life stage", lambda a: a["extra"]["lifeStage"]), ("Where they live", lambda a: a["extra"]["settlement"]),
+                   ("Attitude to ads", lambda a: a["extra"]["adReceptivity"])]
     segments = []
-    for group, key in [("Profession", lambda a: a["professionGroup"]), ("Ideology", lambda a: a["ideology"]), ("Income", lambda a: a["income"]), ("Age", lambda a: a["ageBand"]),
-                       ("Tech adoption", lambda a: a["tech"]), ("Role", lambda a: a["role"]), ("Country GDP tier", lambda a: a["extra"]["gdpTier"]), ("Trust posture", lambda a: a["extra"]["trust"]),
-                       ("Decision heuristic", lambda a: a["extra"]["heuristic"]), ("Temperament", lambda a: a["extra"]["temperament"]), ("Mood today", lambda a: a["mood"])]:
+    for group, key in groups:
         segments += sorted(seg(group, key), key=lambda s: -s["score"])
     prof = [s for s in segments if s["group"] == "Profession"]
     best = (prof[0]["segment"], prof[0]["score"]) if prof else ("", 0.0)
@@ -377,7 +431,7 @@ def compute_stats(agents: list[dict], verdicts: dict[int, dict], final: dict[int
 
     agreement = round(max(0.0, 1 - sd / 3.2) * 100)
     return {
-        "n": n, "mean": mean, "sd": sd, "intent": intent, "intent_source": intent_source, "interviews": _interview_stats(agents, interviews),
+        "n": n, "mean": mean, "sd": sd, "intent": intent, "intent_source": intent_source, "interviews": _interview_stats(agents, interviews), "attention": attention,
         "shift": float(fs.mean() - init.mean()), "mind_changes": mind_changes,
         "segments": segments, "objections": objections, "missing": missing, "top_objection": objections[0]["text"] if objections else "none",
         "best_segment": best, "worst_segment": worst, "agreement": agreement,
@@ -422,7 +476,7 @@ async def run_judge(stimulus: dict, stats: dict, experts: list[dict], compositio
             f"shift during discussion {stats['shift']:+.2f}, mind changes {stats['mind_changes']}, agreement {stats['agreement']}%.\n"
             f"Diversity check: median reaction similarity {stats['diversity']['reactionSimilarityMedian']}, distinct objections {stats['diversity']['distinctObjections']}, segment spread {stats['diversity']['segmentSpread']} ({stats['diversity']['verdict']}).\n"
             f"SEGMENTS:\n{seg}\nOBJECTIONS (clustered):\n{obj}\nMISSING (most cited): {', '.join(stats['missing'])}\nMOST DISCUSSED POSTS:\n{posts}\n\nRESEARCH TEAM FINDINGS:\n{exp}\n\n"
-            f"SAMPLE COMPOSITION: {composition}\n\n{market_summary(market)}\n\n{interview_summary(stats)}\n\nWrite the report fields. JSON only.")
+            f"SAMPLE COMPOSITION: {composition}\n\n{market_summary(market)}\n\n{interview_summary(stats)}\n\n{attention_summary(stats)}\n\nWrite the report fields. JSON only.")
     rng = random.Random(state["seed"] + 99)
     try:
         out = await L.json(role="analyst", system=system, user=user, schema=JUDGE_SCHEMA, meter=meter, fake=lambda: fake_judge(stats, stype, rng, market), max_tokens=8000, effort="medium")
@@ -461,7 +515,7 @@ async def run_judge(stimulus: dict, stats: dict, experts: list[dict], compositio
         "missingKpis": kpis[:8], "variants": [{"label": v["label"], "change": v["change"], "predictedDelta": round(float(v["predicted_delta"]), 1)} for v in out["variants"]],
         "polarization": round(stats["sd"], 2), "shift": round(stats["shift"], 2),
         "confidence": {"sample": n, "agreement": stats["agreement"], "label": label, "note": out["confidence_note"] + f" Diversity: {stats['diversity']['verdict']}."},
-        "intentSplit": stats["intent"], "intentSource": stats["intent_source"], "interviews": stats["interviews"],
+        "intentSplit": stats["intent"], "intentSource": stats["intent_source"], "interviews": stats["interviews"], "attention": stats["attention"],
         "research": {
             "methodology": out["methodology_note"], "limitations": out["limitations"], "team": experts, "otherFindings": others[:12],
             "composition": composition, "diversity": stats["diversity"], "topPosts": stats["top_posts"][:10], "mindChanges": stats["mind_changes"],

@@ -56,7 +56,8 @@ class Meter:
     tokens: dict[str, int] = field(default_factory=lambda: {"in": 0, "out": 0, "cache_read": 0, "cache_write": 0})
     on_update: Optional[Callable[["Meter"], None]] = None
 
-    def add(self, model: str, usage: Any) -> None:
+    def add(self, model: str, usage: Any, price_factor: float = 1.0) -> None:
+        """`price_factor` is 0.5 for results from the Message Batches API."""
         p = PRICING.get(model, PRICING["fake"])
         i = getattr(usage, "input_tokens", 0) or 0
         o = getattr(usage, "output_tokens", 0) or 0
@@ -64,7 +65,7 @@ class Meter:
         cw = getattr(usage, "cache_creation_input_tokens", 0) or 0
         ws = getattr(getattr(usage, "server_tool_use", None), "web_search_requests", 0) or 0
         self.tokens["in"] += i; self.tokens["out"] += o; self.tokens["cache_read"] += cr; self.tokens["cache_write"] += cw
-        self.cost_usd += (i * p["in"] + o * p["out"] + cr * p["cache_read"] + cw * p["cache_write"]) / 1_000_000
+        self.cost_usd += price_factor * (i * p["in"] + o * p["out"] + cr * p["cache_read"] + cw * p["cache_write"]) / 1_000_000
         if model != "fake":
             self.cost_usd += ws * WEB_SEARCH_USD
         self.searches += ws
@@ -75,6 +76,24 @@ class Meter:
     def check(self) -> None:
         if self.cost_usd > self.budget_usd:
             raise BudgetExceeded(f"run budget ${self.budget_usd:.2f} exceeded (${self.cost_usd:.2f})")
+
+
+def json_request(*, model: str, role: str, system: str, user: str | list[dict], schema: dict, max_tokens: int, effort: str | None = None) -> dict[str, Any]:
+    """messages.create parameters for a structured JSON call. Shared by live calls and the batch library builder,
+    so both send exactly the same request."""
+    content = user if isinstance(user, list) else [{"type": "text", "text": user}]
+    kwargs: dict[str, Any] = dict(
+        model=model,
+        max_tokens=max_tokens,
+        system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": content}],
+        output_config={"format": {"type": "json_schema", "schema": sanitize_schema(schema)}, "effort": effort or ("low" if role == "crowd" else "medium")},
+    )
+    # Crowd role-play doesn't benefit from extended thinking, and thinking tokens count against max_tokens
+    # (they truncated persona JSON and tripled cost). Haiku 5.5 accepts disabling it at effort <= high.
+    if role == "crowd" and settings.crowd_thinking == "off" and model.startswith("claude-haiku"):
+        kwargs["thinking"] = {"type": "disabled"}
+    return kwargs
 
 
 @dataclass
@@ -181,19 +200,7 @@ class LLM:
             return out
 
         assert self._client is not None
-        content = user if isinstance(user, list) else [{"type": "text", "text": user}]
-        kwargs: dict[str, Any] = dict(
-            model=model,
-            max_tokens=max_tokens,
-            system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": content}],
-            output_config={"format": {"type": "json_schema", "schema": sanitize_schema(schema)}, "effort": effort or ("low" if role == "crowd" else "medium")},
-        )
-        # Crowd role-play doesn't benefit from extended thinking, and thinking tokens count against max_tokens
-        # (they truncated persona JSON and tripled cost). Haiku 5.5 accepts disabling it at effort <= high.
-        if role == "crowd" and settings.crowd_thinking == "off" and model.startswith("claude-haiku"):
-            kwargs["thinking"] = {"type": "disabled"}
-        resp = await self._create(**kwargs)
+        resp = await self._create(**json_request(model=model, role=role, system=system, user=user, schema=schema, max_tokens=max_tokens, effort=effort))
         meter.add(model, resp.usage)
         if resp.stop_reason == "refusal":
             raise LLMRefusal(getattr(getattr(resp, "stop_details", None), "explanation", "refused"))

@@ -50,13 +50,30 @@ function kindOf(f: File): Kind | null {
   return null
 }
 const fmtSize = (b: number) => b >= MB ? `${(b / MB).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`
+// Every person in the crowd looks at the images themselves, so each one travels with every first impression. The model
+// scales anything larger than this down anyway; shrinking first keeps a 100-person run from uploading hundreds of MB.
+const MAX_SIDE = 1568
+async function shrinkImage(dataUrl: string): Promise<string> {
+  const img = new window.Image()
+  await new Promise((ok, bad) => { img.onload = ok; img.onerror = bad; img.src = dataUrl })
+  const scale = Math.min(1, MAX_SIDE / Math.max(img.width, img.height))
+  if (scale === 1 && dataUrl.length < 1.4 * MB) return dataUrl
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale)
+  canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
+  const out = canvas.toDataURL('image/webp', 0.85)  // keeps transparency; browsers without WebP encoding return PNG
+  return out.length < dataUrl.length ? out : dataUrl
+}
 function readFile(f: File, kind: Kind): Promise<Attachment> {
   return new Promise((resolve, reject) => {
     const r = new FileReader()
     r.onerror = () => reject(new Error(`Couldn't read ${f.name}`))
-    r.onload = () => resolve(kind === 'text'
-      ? { name: f.name, type: f.type || 'text/plain', size: f.size, text: String(r.result) }
-      : { name: f.name, type: kind === 'pdf' ? 'application/pdf' : f.type, size: f.size, data: String(r.result) })
+    r.onload = async () => {
+      if (kind === 'text') return resolve({ name: f.name, type: f.type || 'text/plain', size: f.size, text: String(r.result) })
+      if (kind === 'pdf') return resolve({ name: f.name, type: 'application/pdf', size: f.size, data: String(r.result) })
+      const data = await shrinkImage(String(r.result)).catch(() => String(r.result))
+      resolve({ name: f.name, type: data.slice(5, data.indexOf(';')), size: Math.round((data.length - data.indexOf(',') - 1) * 0.75), data })
+    }
     if (kind === 'text') r.readAsText(f); else r.readAsDataURL(f)
   })
 }

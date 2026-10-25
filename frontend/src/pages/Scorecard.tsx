@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, RotateCcw, Download, AlertTriangle, Target, FlaskConical, Quote, Microscope, Users, Store, Mic, Eye, FileText } from 'lucide-react'
+import { ArrowLeft, RotateCcw, Download, AlertTriangle, Target, FlaskConical, Quote, Microscope, Users, Store, Mic, Eye, FileText, MousePointerClick } from 'lucide-react'
 import { useStore } from '../store'
 import { api } from '../api'
-import type { InterviewSummary, Research, Stimulus } from '../types'
+import type { Attention, InterviewSummary, Research, Stimulus } from '../types'
 
 const col = (s: number) => s >= 7 ? '#3ddc97' : s >= 5 ? '#f5c242' : '#ff6b6b'
 
@@ -12,6 +12,7 @@ export default function Scorecard() {
   const { id } = useParams()
   const { scorecard: storeSc, stimulus: storeStim, reset, loadRun, runId, market: storeMarket, engine } = useStore()
   const [group, setGroup] = useState('Profession')
+  const [metric, setMetric] = useState<'score' | 'stop' | 'click'>('score')
   const [loaded, setLoaded] = useState<{ sc: typeof storeSc; stim: typeof storeStim } | null>(null)
   const [err, setErr] = useState<string | null>(null)
   // The brief as the crowd read it (with file descriptions) is saved on the run, not in the form state.
@@ -83,6 +84,8 @@ export default function Scorecard() {
         </div>
       </div>
 
+      {sc.attention && <AttentionCard at={sc.attention} />}
+
       <details className="card p-5">
         <summary className="cursor-pointer font-semibold flex flex-wrap items-center gap-2 list-none">
           <Eye size={16} className="text-accent" /> What the crowd saw
@@ -95,6 +98,12 @@ export default function Scorecard() {
           </div>
         ) : null}
         <div className="text-xs mt-3"><span className="text-muted">Audience: </span>{stimulus.targetAudience || 'not given'}</div>
+        {R?.crowd && (
+          <div className="text-xs mt-1">
+            <span className="text-muted">Crowd: </span>#{R.crowd.seed} · {sc.confidence.sample.toLocaleString()} people drawn from a village of {R.crowd.village.toLocaleString()} ·{' '}
+            {R.crowd.newPeople >= sc.confidence.sample ? 'none of them in an earlier test' : `${R.crowd.newPeople.toLocaleString()} new to testing, the rest least tested so far`}
+          </div>
+        )}
       </details>
 
       <div className="grid md:grid-cols-2 gap-5">
@@ -115,15 +124,25 @@ export default function Scorecard() {
             <h2 className="font-semibold">By segment</h2>
             <div className="flex gap-1 flex-wrap justify-end">{groups.map(g => <button key={g} className="tab text-xs py-1 px-2" data-active={group === g} onClick={() => setGroup(g)}>{g}</button>)}</div>
           </div>
+          {segs.some(s => s.stop != null) && (
+            <div className="flex gap-1 mb-3 text-xs">
+              <span className="text-muted mr-1 self-center">Show:</span>
+              {([['score', 'Score'], ['stop', 'Would stop'], ['click', 'Would click']] as const).map(([k, l]) => <button key={k} className="tab py-0.5 px-2" data-active={metric === k} onClick={() => setMetric(k)}>{l}</button>)}
+            </div>
+          )}
           <div className="space-y-2">
-            {segs.map(s => (
-              <div key={s.segment} className="flex items-center gap-3 text-sm">
-                <div className="w-36 truncate" title={s.segment}>{s.segment}</div>
-                <div className="flex-1 h-2 bg-panel-2 rounded-full overflow-hidden"><div className="h-full rounded-full" style={{ width: `${s.score * 10}%`, background: col(s.score) }} /></div>
-                <div className="w-10 text-right font-semibold" style={{ color: col(s.score) }}>{s.score.toFixed(1)}</div>
-                <div className="w-24 text-right text-xs text-muted">{s.intent}% buy · n={s.n}</div>
-              </div>
-            ))}
+            {segs.map(s => {
+              const pct = metric === 'score' ? s.score * 10 : (s[metric] ?? 0)
+              const c = col(pct / 10)
+              return (
+                <div key={s.segment} className="flex items-center gap-3 text-sm">
+                  <div className="w-36 truncate" title={s.segment}>{s.segment}</div>
+                  <div className="flex-1 h-2 bg-panel-2 rounded-full overflow-hidden"><div className="h-full rounded-full" style={{ width: `${pct}%`, background: metric === 'score' ? c : '#5b8cff' }} /></div>
+                  <div className="w-10 text-right font-semibold" style={{ color: metric === 'score' ? c : undefined }}>{metric === 'score' ? s.score.toFixed(1) : `${s[metric] ?? 0}%`}</div>
+                  <div className="w-24 text-right text-xs text-muted">{s.intent}% buy · n={s.n}</div>
+                </div>
+              )
+            })}
           </div>
         </div>
       </div>
@@ -223,7 +242,7 @@ export default function Scorecard() {
             <div>
               <div className="text-xs text-muted uppercase tracking-wide mb-1 flex items-center gap-1"><Users size={12} /> Sample composition (n={String(R.composition.n)})</div>
               <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                {(['professionGroup', 'income', 'gdpTier', 'ideology', 'trust', 'temperament'] as const).map(k => {
+                {(['professionGroup', 'income', 'gdpTier', 'ideology', 'trust', 'temperament', 'lifeStage', 'settlement', 'adReceptivity'] as const).map(k => {
                   const v = R.composition[k] as Record<string, number> | undefined
                   if (!v) return null
                   return <div key={k}><span className="text-muted capitalize">{k.replace(/([A-Z])/g, ' $1')}: </span>{Object.entries(v).slice(0, 5).map(([a, b]) => `${a} ${b}`).join(', ')}</div>
@@ -266,6 +285,52 @@ function Gauge({ value }: { value: number }) {
       <text x={90} y={84} textAnchor="middle" fill="#e6ebf5" fontSize={40} fontWeight={700}>{value.toFixed(1)}</text>
       <text x={90} y={108} textAnchor="middle" fill="#8b96ad" fontSize={12}>out of 10</text>
     </svg>
+  )
+}
+
+/** First impressions where each person really meets it: did they stop, what did they take in, would they click. */
+function AttentionCard({ at }: { at: Attention }) {
+  const top = Math.max(1, ...at.byPlacement.map(p => p.stopRate))
+  return (
+    <div className="card p-5">
+      <h2 className="font-semibold mb-3 flex flex-wrap items-center gap-2"><MousePointerClick size={16} className="text-accent" /> Would they even notice it?
+        <span className="text-xs text-muted font-normal">each person met it where they usually see ads · {at.n.toLocaleString()} people</span></h2>
+      <div className="grid md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-5">
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-2 text-center">
+            <Mini label="Would stop scrolling" value={`${at.stopRate}%`} c={at.stopRate >= 30 ? '#3ddc97' : at.stopRate >= 15 ? '#f5c242' : '#ff6b6b'} />
+            <Mini label={`Would click (+${at.click.maybe}% maybe)`} value={`${at.click.yes}%`} c={at.click.yes >= 10 ? '#3ddc97' : at.click.yes >= 4 ? '#f5c242' : '#ff6b6b'} />
+          </div>
+          {at.glance.length > 0 && (
+            <div>
+              <div className="text-xs text-muted uppercase tracking-wide mb-1.5">What they took in within 2 seconds</div>
+              <div className="space-y-1.5">
+                {at.glance.slice(0, 4).map(g => (
+                  <div key={g.text} className="bg-panel-2 rounded-lg px-2.5 py-1.5 text-sm">
+                    {g.text} <span className="text-xs text-muted">· {g.count}</span>
+                    {g.quotes[0] && g.quotes[0].text !== g.text && <div className="text-xs text-muted">“{g.quotes[0].text}” — {g.quotes[0].agent}</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+        <div>
+          <div className="text-xs text-muted uppercase tracking-wide mb-1.5">By where they saw it</div>
+          <div className="space-y-1.5">
+            {at.byPlacement.map(p => (
+              <div key={p.placement} className="flex items-center gap-2 text-sm">
+                <div className="w-40 truncate shrink-0" title={p.placement}>{p.placement}</div>
+                <div className="flex-1 h-2 bg-panel-2 rounded-full overflow-hidden"><div className="h-full rounded-full bg-accent" style={{ width: `${(p.stopRate / top) * 100}%` }} /></div>
+                <div className="w-24 text-right text-xs"><b>{p.stopRate}%</b> stop · {p.clickRate}% click</div>
+                <div className="w-10 text-right text-xs text-muted">n={p.n}</div>
+              </div>
+            ))}
+          </div>
+          <div className="text-[11px] text-muted mt-2">Placements come from each person's media habits; small groups (n under 10) are noisy.</div>
+        </div>
+      </div>
+    </div>
   )
 }
 

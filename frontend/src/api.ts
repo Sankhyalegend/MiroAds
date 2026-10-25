@@ -16,7 +16,7 @@ async function j<T>(path: string, init?: RequestInit): Promise<T> {
 export interface Health { ok: boolean; provider: string; crowdModel: string; analystModel: string; devMode: boolean; library: number; runBudgetUsd: number }
 export interface RunView {
   id: string; status: string; stage: string; costUsd: number; error: string | null
-  config: { crowdSize: number; rounds: number; seed: number; budgetUsd: number }
+  config: { crowdSize: number; rounds: number; seed?: number; budgetUsd: number }
   stimulus: Stimulus; personas: Persona[]; lastSeq: number; hasScorecard: boolean
 }
 export interface RunSummary { id: string; status: string; stage: string; costUsd: number; createdAt: number; stimulus: { type: string; title: string }; config: { crowdSize: number; rounds: number }; overall: number | null; verdict: string | null }
@@ -26,7 +26,7 @@ export const api = {
   libraryStats: () => j<{ count: number; job: { running: boolean; done: number; total: number; cost: number; error: string | null } }>('/library/stats'),
   buildLibrary: (n: number, budgetUsd: number) => j<{ started: boolean; toGenerate: number }>('/library/build', { method: 'POST', body: JSON.stringify({ n, seed: 1, budgetUsd }) }),
   createStimulus: (s: Stimulus) => j<{ id: string }>('/stimuli', { method: 'POST', body: JSON.stringify(s) }),
-  createRun: (body: { stimulus_id: string; crowdSize: number; rounds: number; seed: number; budgetUsd?: number; marketScan?: boolean }) => j<RunView>('/runs', { method: 'POST', body: JSON.stringify(body) }),
+  createRun: (body: { stimulus_id: string; crowdSize: number; rounds: number; seed?: number; budgetUsd?: number; marketScan?: boolean }) => j<RunView>('/runs', { method: 'POST', body: JSON.stringify(body) }),
   getRun: (id: string) => j<RunView>(`/runs/${id}`),
   stopRun: (id: string) => j<{ stopped: boolean }>(`/runs/${id}/stop`, { method: 'POST' }),
   getScorecard: (id: string) => j<Scorecard>(`/runs/${id}/scorecard`),

@@ -1,4 +1,6 @@
-"""Stage 1: every agent forms a first impression alone. Structured verdict per agent."""
+"""Stage 1: every agent forms a first impression alone. Structured verdict per agent.
+Each person looks at the actual images, and meets ads, sites and offers where they really would (their usual ad places),
+so the first questions are whether they'd have stopped at all and what they took in at a glance."""
 from __future__ import annotations
 
 import asyncio
@@ -11,6 +13,52 @@ from .banks import MISSING, OBJECTIONS, PRAISE
 from .events import bus
 from .market import market_block
 from .stimulus import stimulus_block
+
+# Where someone meets the stimulus, keyed by the ad places in personas/frame.py, plus a friend showing it.
+PLACEMENTS = {
+    "Instagram or TikTok feed": "as a sponsored post while scrolling your Instagram or TikTok feed",
+    "Facebook feed": "as a sponsored post while scrolling Facebook",
+    "YouTube ads": "as an ad before a YouTube video you wanted to watch (skippable after 5 seconds)",
+    "Reddit promoted posts": "as a promoted post in your Reddit feed",
+    "LinkedIn feed": "as a promoted post in your LinkedIn feed during a work break",
+    "News websites": "as a banner next to a news article you are reading",
+    "Podcasts": "in the show notes of a podcast you listen to",
+    "TV and streaming": "in an ad break while streaming a show",
+    "Search results": "as a sponsored result at the top of a search for something related",
+    "WhatsApp or group chats": "forwarded by someone in a WhatsApp group you're in",
+    "Billboards and transit": "on a poster at a bus stop or station on your way somewhere",
+    "Trade magazines": "as an ad page in a trade magazine you read for work",
+    "In shops": "on a display in a shop you're browsing",
+    "Shown by a friend": "when a friend shows it to you on their phone",
+}
+# People from the first library have no ad places; their information diet stands in.
+DIET_PLACE = {"Reddit": "Reddit promoted posts", "YouTube reviews": "YouTube ads", "LinkedIn": "LinkedIn feed", "TikTok/Instagram": "Instagram or TikTok feed",
+              "Newspapers & podcasts": "News websites", "Word of mouth": "Shown by a friend", "Trade press": "Trade magazines"}
+SITUATION = {
+    "creative": "You come across this ad {where}.",
+    "website": "You end up on this page after seeing it {where}.",
+    "offer": "This offer reaches you {where}.",
+}
+CLICK = {
+    "creative": "Would you tap or click it, or look it up afterwards?",
+    "website": "Would you go past this first screen: sign up, start a trial or keep exploring?",
+    "offer": "Would you click through to take or check the offer?",
+}
+
+
+def placement(agent: dict, stype: str, rng: random.Random) -> str | None:
+    """Where this person meets it in this run. Their main place (from their information diet) counts double; a friend
+    showing it on their phone happens one time in ten. Business ideas are pitched, not placed."""
+    if stype not in SITUATION:
+        return None
+    ex = agent["extra"]
+    places = list(ex.get("adPlaces") or [DIET_PLACE.get(ex.get("diet", ""), "Instagram or TikTok feed")])
+    if stype == "creative":
+        places = [p for p in places if p != "Podcasts"]  # a picture needs somewhere to be seen
+    if not places or rng.random() < 0.1:
+        return "Shown by a friend"
+    return rng.choices(places, weights=[2] + [1] * (len(places) - 1))[0]
+
 
 VERDICT_SCHEMA = {
     "type": "object",
@@ -27,6 +75,22 @@ VERDICT_SCHEMA = {
     "required": ["score", "intent", "reaction", "objection", "missing", "price_reaction", "reasoning", "confidence"],
     "additionalProperties": False,
 }
+
+
+def verdict_schema(stype: str) -> dict:
+    """Ads, sites and offers first ask what a real person does in the moment: stop or scroll past, take in a few words, click.
+    These come before the score so the gut answer isn't argued into shape by the considered one."""
+    if stype not in SITUATION:
+        return VERDICT_SCHEMA
+    base = VERDICT_SCHEMA["properties"]
+    props = {
+        "noticed": {"type": "boolean", "description": "Honestly: in that moment, would you have stopped to look at it at all? Most ads get scrolled past."},
+        "two_second_takeaway": {"type": "string", "description": "What you took in within the first 2 seconds, 10 words or fewer; 'nothing' if you'd have scrolled past"},
+        "score": base["score"], "intent": base["intent"],
+        "would_click": {"type": "string", "enum": ["Yes", "Maybe", "No"], "description": CLICK[stype]},
+        **{k: v for k, v in base.items() if k not in ("score", "intent")},
+    }
+    return {**VERDICT_SCHEMA, "properties": props, "required": list(props)}
 
 # What the question actually is, per stimulus type. This is the difference between judging an ad and auditing a contract.
 FRAMING = {
@@ -89,7 +153,15 @@ def fake_verdict(agent: dict, stype: str, rng: random.Random) -> dict:
     obj = OBJECTIONS[stype]
     objection = obj[1] if ps > .65 and rng.random() < .5 else (obj[-1] if agent["tech"] == "Laggard" and rng.random() < .4 else rng.choice(obj))
     pos = score >= 6.5
+    attention = {}
+    if stype in SITUATION:
+        # Most ads are scrolled past; people who like ads, or like this one, stop more often.
+        p_stop = 0.25 + 0.04 * (score - 5) + {"Ignores most ads": -0.1, "Sceptical of ads": -0.05, "Enjoys discovering things through ads": 0.15}.get(ex.get("adReceptivity", ""), 0)
+        noticed = rng.random() < max(0.05, min(0.9, p_stop))
+        attention = {"noticed": noticed, "two_second_takeaway": "a new product, not sure what" if noticed else "nothing",
+                     "would_click": "Yes" if noticed and score >= 7 else "Maybe" if noticed and score >= 5 else "No"}
     return {
+        **attention,
         "score": score,
         "intent": "Would buy/use" if score >= 6.5 else "Maybe" if score >= 4 else "Would not",
         "reaction": (rng.choice(PRAISE[stype]) if pos else objection) + ".",
@@ -101,6 +173,16 @@ def fake_verdict(agent: dict, stype: str, rng: random.Random) -> dict:
     }
 
 
+def image_blocks(images: list[dict]) -> list[dict]:
+    """The pictures every person looks at, before their own card so the shared part of the message is cached once per run."""
+    if not images:
+        return []
+    blocks: list[dict] = [{"type": "text", "text": "What you see:"}]
+    blocks += [{"type": "image", "source": {"type": "base64", "media_type": im["media_type"], "data": im["data"]}} for im in images]
+    blocks[-1]["cache_control"] = {"type": "ephemeral"}
+    return blocks
+
+
 async def run_stage1(run_id: str, stimulus: dict, agents: list[dict], meter: Meter, state: dict) -> dict[int, dict]:
     """Returns {agent_id: verdict}. Emits 'impression' events as they complete."""
     L = llm()
@@ -108,23 +190,35 @@ async def run_stage1(run_id: str, stimulus: dict, agents: list[dict], meter: Met
     verdicts: dict[int, dict] = {}
     rng = random.Random(state["seed"] * 31)
     stype = stimulus["type"]
+    schema = verdict_schema(stype)
+    seen = image_blocks(stimulus.get("_images") or [])
 
     async def one(agent: dict):
         if state.get("stopped"):
             return
-        card = persona_card(agent["_sk"], agent["_profile"], agent["mood"], agent.get("_mood_reason", ""))
-        user = f"{card}{market_block(agent)}\n\nYou see the stimulus above for the first time. Give your first impression as JSON."
         local_rng = random.Random(rng.random())
+        place = placement(agent, stype, local_rng)
+        situation = (f"{SITUATION[stype].format(where=PLACEMENTS[place])} Give it the attention you'd really give it there: first say honestly "
+                     f"whether you'd even have stopped, then look at it properly." if place else "You hear this pitch for the first time.")
+        card = persona_card(agent["_sk"], agent["_profile"], agent["mood"], agent.get("_mood_reason", ""))
+        text = f"{card}{market_block(agent)}\n\n{situation} Give your first impression as JSON."
         try:
-            v = await L.json(role="crowd", system=system, user=user, schema=VERDICT_SCHEMA, meter=meter, fake=lambda: fake_verdict(agent, stype, local_rng), max_tokens=900)
+            v = await L.json(role="crowd", system=system, user=[*seen, {"type": "text", "text": text}] if seen else text, schema=schema, meter=meter,
+                             fake=lambda: fake_verdict(agent, stype, local_rng), max_tokens=900)
         except Exception as e:
             if type(e).__name__ == "BudgetExceeded":
                 state["stopped"] = True; state["stop_reason"] = str(e); return
             v = fake_verdict(agent, stype, local_rng) | {"_error": str(e)[:160]}
         v["score"] = float(max(0, min(10, v.get("score", 5))))
+        if place:
+            v["placement"] = place
         verdicts[agent["id"]] = v
         db.set_verdict(run_id, agent["id"], v)
         await bus.emit(run_id, {"kind": "impression", "agentId": agent["id"], "score": round(v["score"], 1)})
 
-    await asyncio.gather(*(one(a) for a in agents))
+    # One person first, so the shared instructions and images are written to the cache once and everyone after reads them,
+    # instead of the first wave of parallel calls each paying to write them.
+    if agents:
+        await one(agents[0])
+    await asyncio.gather(*(one(a) for a in agents[1:]))
     return verdicts

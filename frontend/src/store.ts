@@ -243,7 +243,8 @@ export const useStore = create<State>((set, get) => {
       }
       try {
         const { id: stimulus_id } = await api.createStimulus(stimulus)
-        const run = await api.createRun({ stimulus_id, crowdSize, rounds, seed: 42, marketScan })
+        // No seed: the backend picks a new crowd number, so every test meets people who haven't been tested yet.
+        const run = await api.createRun({ stimulus_id, crowdSize, rounds, marketScan })
         freshRunState(run.personas, rounds)
         set({ runId: run.id })
         attachWs(run.id, 0)

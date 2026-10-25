@@ -8,7 +8,7 @@ import random
 
 from .. import db
 from ..llm import Meter, llm
-from .frame import sample_skeleton
+from .frame import FRAME_VERSION, SETTLEMENT_PHRASE, sample_skeleton
 
 PROFILE_SCHEMA = {
     "type": "object",
@@ -16,14 +16,15 @@ PROFILE_SCHEMA = {
         "name": {"type": "string"},
         "backstory": {"type": "string", "description": "90-130 words, first person, one specific recent life event, concrete details. Hard limit 140 words."},
         "pet_peeves": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 2},
-        "overvalues": {"type": "string"},
-        "ignores": {"type": "string"},
+        "overvalues": {"type": "string", "description": "A short phrase, 10 words or less"},
+        "ignores": {"type": "string", "description": "A short phrase, 10 words or less"},
         "voice": {"type": "string", "description": "How this person writes online, in 15 words or less"},
         "past_products": {
             "type": "array", "minItems": 2, "maxItems": 2,
-            "items": {"type": "object", "properties": {"name": {"type": "string"}, "verdict": {"type": "string"}}, "required": ["name", "verdict"], "additionalProperties": False},
+            "items": {"type": "object", "properties": {"name": {"type": "string"}, "verdict": {"type": "string", "description": "15 words or less"}},
+                      "required": ["name", "verdict"], "additionalProperties": False},
         },
-        "evaluation_lens": {"type": "string", "description": "One sentence: what they look for first when judging a product, ad, offer or business idea"},
+        "evaluation_lens": {"type": "string", "description": "One sentence of 20 words or less: what they look for first when judging a product, ad, offer or business idea"},
     },
     "required": ["name", "backstory", "pet_peeves", "overvalues", "ignores", "voice", "past_products", "evaluation_lens"],
     "additionalProperties": False,
@@ -32,13 +33,17 @@ PROFILE_SCHEMA = {
 SYSTEM = (
     "You write realistic, specific, non-stereotyped personas for market research panels. "
     "Given structured attributes, invent a believable individual consistent with them. Avoid clichés, avoid naming real companies' employees, "
-    "vary sentence rhythm, and never mention that this is a persona. Culturally plausible name for the country, but NOT the most "
-    "common or stereotypical one: vary region, generation and family naming traditions so a panel of thousands has few repeats.\n"
+    "vary sentence rhythm, and never mention that this is a persona. Give an ordinary, believable full name for someone of that gender and age "
+    "in that country, the kind found in a real phone book: vary region, community and generation rather than reaching for the single most common "
+    "or stereotypical name, and do not invent double-barrelled or mixed-culture surnames unless the person's background calls for one.\n"
     "Important for realism: most people are NOT careful, sceptical, spec-reading buyers. Let the attributes decide. A person whose motivation is looks, status, fun, "
     "convenience or novelty should have an evaluation lens, pet peeves and past-product verdicts that reflect THAT (e.g. 'I buy what makes my desk look good', "
     "'I hate ugly packaging', 'bought it because a friend had one'), not warranty or return-policy talk. Only personas whose trust posture, heuristic or motivation "
-    "point to proof, price or reliability should care about specs, terms, warranties or total cost. Give enthusiasts real enthusiasm. Output JSON only."
+    "point to proof, price or reliability should care about specs, terms, warranties or total cost. Give enthusiasts real enthusiasm.\n"
+    "Make the backstory fit the life stage, household, place and spare money: a parent of young kids in a small town has different days, worries "
+    "and budgets than a single renter in a capital. Let their values and brand habits show in the past-product verdicts. Output JSON only."
 )
+NAME_LETTERS = "ABCDEFGHIJKLMNOPRSTVYZ"
 
 _PEEVES = ["ads that hide the price", "apps that need an account for everything", "fake urgency", "jargon instead of numbers", "subscriptions for things that should be one-off",
            "products that look good and work badly", "influencer reviews", "tiny fonts in terms", "'AI-powered' on everything", "bundles that force extras",
@@ -82,6 +87,35 @@ def fake_profile(sk: dict) -> dict:
     }
 
 
+def tidy(prof: dict) -> dict:
+    """Names sometimes come back with stray spaces."""
+    prof["name"] = " ".join(str(prof.get("name", "")).split())
+    return prof
+
+
+def profile_prompt(sk: dict, avoid: list[str] | None = None) -> str:
+    """The attributes as the persona writer reads them. The name letters spread names out when thousands are written at once
+    (batch requests can't see each other's names); duplicates left over are renamed by dedupe_names."""
+    letters = ", ".join(random.Random(sk["seed"] * 31 + 7).sample(NAME_LETTERS, 3))
+    lines = [
+        f"Job: {sk['profession']} ({sk['professionGroup']}){', now retired' if sk['lifeStage'] == 'Retired' else ''}",
+        f"Age: {sk['ageBand']}; gender: {sk['gender']}; education: {sk['education']}",
+        f"Lives {SETTLEMENT_PHRASE[sk['settlement']]} in {sk['country']} ({sk['gdpTier']}-income country, currency {sk['currency']})",
+        f"Life stage: {sk['lifeStage']}; household of {sk['household']}",
+        f"Household income: {sk['income']} for their country; money left each month after essentials: about {sk['spareMoney']}; spending style: {sk['economic']}",
+        f"Politics: {sk['ideology']}; {sk['institutions']}; {sk['bigTech']}",
+        f"Tech adoption: {sk['tech']}; role when buying: {sk['role']}; trust: {sk['trust']}; decides by: {sk['heuristic']}; brands: {sk['brandLoyalty']}",
+        f"Information diet: {sk['diet']}; ads: {sk['adReceptivity']}{', uses an ad blocker' if sk['adBlocker'] else ''}; meets ads mostly on: {', '.join(sk['adPlaces'])}",
+        f"Cares about: {sk['values'][0]} and {sk['values'][1]}; what moves them most: {sk['motivation']}",
+        f"Temperament: {sk['temperament']}; reacts to new things: {sk['responseStyle']}",
+        f"Personality (0-1): {sk['traits']}",
+        f"Name: real-sounding for {sk['country']}, this gender and age; if one fits naturally, a first name starting with {letters}",
+    ]
+    if avoid:
+        lines.append(f"These names are already overused in this panel, do NOT use them or close variants: {', '.join(avoid)}")
+    return "Attributes:\n" + "\n".join(f"- {line}" for line in lines) + "\nWrite this person."
+
+
 async def generate_batch(seeds: list[int], meter: Meter, progress=None, avoid_names: dict[str, list[str]] | None = None) -> int:
     """Generate and store personas for the given seeds. Returns count stored.
     `avoid_names` maps country -> names already overused there, so the model picks something else."""
@@ -93,13 +127,9 @@ async def generate_batch(seeds: list[int], meter: Meter, progress=None, avoid_na
     async def one(seed: int):
         nonlocal done
         sk = sample_skeleton(seed)
-        avoid = (avoid_names or {}).get(sk["country"], [])[:40]
-        user = "Attributes:\n" + "\n".join(f"- {k}: {v}" for k, v in sk.items() if k not in ("seed", "nameHint", "traits")) + \
-               f"\n- personality: {sk['traits']}\n- suggested name (may adapt for culture): {sk['nameHint']}\n" + \
-               (f"- these names are already overused in this panel, do NOT use them or close variants: {', '.join(avoid)}\n" if avoid else "") + \
-               "Write this person."
+        user = profile_prompt(sk, (avoid_names or {}).get(sk["country"], [])[:40])
         try:
-            prof = await L.json(role="crowd", system=SYSTEM, user=user, schema=PROFILE_SCHEMA, meter=meter, fake=lambda: fake_profile(sk), max_tokens=1200)
+            prof = tidy(await L.json(role="crowd", system=SYSTEM, user=user, schema=PROFILE_SCHEMA, meter=meter, fake=lambda: fake_profile(sk), max_tokens=1200))
         except Exception as e:  # keep the library build going; fall back to template texture
             prof = fake_profile(sk) | {"_error": str(e)[:120]}
         async with lock:
@@ -114,10 +144,10 @@ async def generate_batch(seeds: list[int], meter: Meter, progress=None, avoid_na
     return len(rows)
 
 
-def overused_names(min_count: int = 2) -> dict[str, list[str]]:
+def overused_names(min_count: int = 2, version: int = FRAME_VERSION) -> dict[str, list[str]]:
     """country -> names that already appear at least `min_count` times there, most frequent first."""
     by_country: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
-    for p in db.all_personas():
+    for p in db.all_personas(version):
         if "_error" not in p["profile"]:
             by_country[p["skeleton"]["country"]][p["profile"]["name"]] += 1
     return {c: [n for n, k in cnt.most_common() if k >= min_count] for c, cnt in by_country.items()}
@@ -128,10 +158,11 @@ NAME_SYSTEM = ("You give realistic full names to research-panel participants. Cu
                "and deliberately uncommon enough not to collide with names already in use. Output JSON only.")
 
 
-async def dedupe_names(meter: Meter, progress=None) -> int:
-    """Rename every persona whose name is already taken (keeping the lowest id). One tiny call each. Returns renamed count."""
+async def dedupe_names(meter: Meter, progress=None, version: int = FRAME_VERSION) -> int:
+    """Rename every persona of this library version whose name is already taken (keeping the lowest id). One tiny call each.
+    Returns renamed count."""
     L = llm()
-    lib = sorted((p for p in db.all_personas() if "_error" not in p["profile"]), key=lambda p: p["id"])
+    lib = sorted((p for p in db.all_personas(version) if "_error" not in p["profile"]), key=lambda p: p["id"])
     taken: dict[str, set[str]] = collections.defaultdict(set)
     seen: set[str] = set()
     dupes = []

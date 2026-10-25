@@ -42,6 +42,14 @@ export default function AgentPanel({ runId, persona, onClose }: { runId: string 
         {ex.trust && <span className="chip">{String(ex.trust)}</span>}{ex.heuristic && <span className="chip">{String(ex.heuristic)}</span>}
         {ex.gdpTier && <span className="chip">{String(ex.gdpTier)}-income country</span>}
       </div>
+      {ex.lifeStage && (
+        <div className="text-xs space-y-0.5">
+          <div><span className="text-muted">Life: </span>{ex.lifeStage}, household of {ex.household} · {ex.settlement} · {ex.education}</div>
+          <div><span className="text-muted">Spare money: </span>about {ex.spareMoney} a month after bills</div>
+          <div><span className="text-muted">Ads: </span>{ex.adReceptivity}{ex.adBlocker ? ' · uses an ad blocker' : ''} · sees them on {ex.adPlaces?.join(', ')}</div>
+          <div><span className="text-muted">Cares about: </span>{ex.values?.join(' and ')} · {ex.brandLoyalty?.toLowerCase()}</div>
+        </div>
+      )}
       {ex.backstory && <p className="text-xs text-muted leading-relaxed">{String(ex.backstory)}</p>}
       {ex.lens && <div className="text-xs"><span className="text-muted">How they judge: </span>{String(ex.lens)}</div>}
       {Array.isArray(ex.petPeeves) && ex.petPeeves.length > 0 && <div className="text-xs"><span className="text-muted">Pet peeves: </span>{(ex.petPeeves as string[]).join('; ')}</div>}
@@ -61,6 +69,12 @@ export default function AgentPanel({ runId, persona, onClose }: { runId: string 
       {d.verdict ? (
         <div className="bg-panel-2 rounded-lg p-3 space-y-1.5">
           <div className="text-xs text-muted uppercase tracking-wide">First impression · {d.verdict.score.toFixed(1)} · {d.verdict.intent}</div>
+          {d.verdict.noticed != null && (
+            <div className="text-xs">
+              <span className="text-muted">Met it: </span>{d.verdict.placement ?? 'unknown'} · {d.verdict.noticed ? 'stopped to look' : 'would have scrolled past'}
+              {d.verdict.noticed && d.verdict.two_second_takeaway ? <> · took in “{d.verdict.two_second_takeaway}”</> : null} · would click: {d.verdict.would_click}
+            </div>
+          )}
           <div>“{d.verdict.reaction}”</div>
           {d.verdict.reasoning && <div className="text-xs text-muted">{d.verdict.reasoning}</div>}
           <div className="text-xs"><span className="text-muted">Objection: </span>{d.verdict.objection}</div>

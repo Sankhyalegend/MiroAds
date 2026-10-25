@@ -131,8 +131,19 @@ export interface InterviewSummary {
   quotes: { agent: string; intent: Intent; text: string }[]
 }
 
+/** First impressions where people really meet it: would they have stopped, would they click, by placement. */
+export interface Attention {
+  n: number
+  stopRate: number
+  click: { yes: number; maybe: number; no: number }
+  byPlacement: { placement: string; n: number; stopRate: number; clickRate: number }[]
+  /** What those who stopped took in within two seconds, grouped. */
+  glance: { text: string; agent?: string; count: number; quotes: { agent: string; text: string }[] }[]
+}
+
 export interface DimensionScore { name: string; score: number; weight: number; note: string }
-export interface SegmentScore { segment: string; group: string; score: number; n: number; intent: number }
+/** `stop` and `click` are percentages, present when the run measured attention. */
+export interface SegmentScore { segment: string; group: string; score: number; n: number; intent: number; stop?: number; click?: number }
 export interface Objection { text: string; agent?: string; count: number; influence: number; quotes: { agent: string; text: string }[] }
 export interface MissingKpi { kpi: string; why: string; target: string }
 export interface Variant { label: string; change: string; predictedDelta: number }
@@ -154,13 +165,24 @@ export interface Research {
   market?: Partial<MarketBrief> & { status: MarketStatus; reason?: string; moodShifts?: { wary?: number; excited?: number } }
   /** How each list was grouped into themes: "model" (sorted by meaning) or "word matching". */
   groupedBy?: { objections?: string; takeaways?: string; fixes?: string }
+  /** The crowd number (seed), the size of the village it was drawn from, and how many had not been in a test before. */
+  crowd?: { seed: number; village: number; newPeople: number }
 }
 
 export interface AgentDetail extends Persona {
   personaId?: number
   mood?: string
-  extra?: Record<string, unknown> & { backstory?: string; petPeeves?: string[]; lens?: string; voice?: string; trust?: string; heuristic?: string; country?: string; gdpTier?: string; pastProducts?: { name: string; verdict: string }[] }
-  verdict?: { score: number; intent: string; reaction: string; objection: string; missing: string; price_reaction?: string; reasoning?: string; confidence?: number } | null
+  extra?: Record<string, unknown> & {
+    backstory?: string; petPeeves?: string[]; lens?: string; voice?: string; trust?: string; heuristic?: string; country?: string; gdpTier?: string; pastProducts?: { name: string; verdict: string }[]
+    /** Life and buying traits; absent on people from the first library. */
+    lifeStage?: string; household?: number; settlement?: string; education?: string; spareMoney?: string
+    adReceptivity?: string; adBlocker?: boolean; adPlaces?: string[]; values?: string[]; brandLoyalty?: string
+  }
+  verdict?: {
+    score: number; intent: string; reaction: string; objection: string; missing: string; price_reaction?: string; reasoning?: string; confidence?: number
+    /** Where they met it and what they did in the moment (ads, sites and offers). */
+    placement?: string; noticed?: boolean; two_second_takeaway?: string; would_click?: 'Yes' | 'Maybe' | 'No'
+  } | null
   finalScore?: number | null
   actions?: { round: number; action: string; text: string; target?: number | null; score: number; why?: string }[]
   /** What they knew about the market, and their mood before the news shifted it. */
@@ -190,4 +212,5 @@ export interface Scorecard {
   /** Where the intent split comes from, e.g. "exit interviews". Older reports used score cut-offs. */
   intentSource?: string
   interviews?: InterviewSummary | null
+  attention?: Attention | null
 }

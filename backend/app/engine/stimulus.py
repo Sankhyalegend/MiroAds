@@ -33,6 +33,8 @@ DOC_SCHEMA = {
 
 DOC_SYSTEM = "You summarise documents for a research panel that cannot open them. Report what is literally there; do not evaluate or add anything. JSON only."
 NOTE_CHARS = 6000  # text notes are passed on as written, up to this length
+SEEN_IMAGES = 3  # images every person looks at in their first impression (stage1.image_blocks)
+IMAGE_B64_MAX = 6_900_000  # the API takes images up to 5 MB
 
 
 def _parse_data_url(url: str) -> tuple[str, str] | None:
@@ -100,9 +102,22 @@ async def describe_attachment(att: dict, meter: Meter) -> str:
     return f"Attached file '{name}' ({typ or 'unknown type'}) is not a format the panel can read."
 
 
+def seen_images(s: dict) -> list[dict]:
+    """The pictures people look at themselves: the creative and any attached images, as {media_type, data}."""
+    urls = ([s["imageUrl"]] if s.get("imageUrl") else []) + [a["data"] for a in s.get("attachments") or [] if a.get("type", "").startswith("image/") and a.get("data")]
+    out = []
+    for u in urls:
+        p = _parse_data_url(u)
+        if p and len(p[1]) <= IMAGE_B64_MAX:
+            out.append({"media_type": p[0], "data": p[1]})
+    return out[:SEEN_IMAGES]
+
+
 async def build_brief(stimulus: dict, meter: Meter) -> dict:
-    """Returns the stimulus with `brief` finalized: offer, URL, image and attached files folded into the text agents read."""
+    """Returns the stimulus with `brief` finalized: offer, URL, image and attached files folded into the text agents read.
+    `_images` holds the pictures themselves for first impressions; it is not saved with the stimulus."""
     s = dict(stimulus)
+    s["_images"] = seen_images(s)
     parts = [s.get("brief", "").strip()]
     if s.get("type") == "offer" and s.get("offer"):
         o = s["offer"]

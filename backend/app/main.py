@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 import uuid
 from typing import Any, Optional
 
@@ -13,7 +14,7 @@ from pydantic import BaseModel, Field
 from . import db
 from .config import settings
 from .engine.events import bus
-from .engine.runner import start_run_task, stop_run
+from .engine.runner import start_run_task, stop_run, village
 from .llm import Meter
 from .personas.generate import generate_batch
 
@@ -48,7 +49,7 @@ class RunIn(BaseModel):
     stimulus_id: str
     crowdSize: int = Field(default=300, ge=20, le=3000)
     rounds: int = Field(default=5, ge=0, le=12)
-    seed: int = 42
+    seed: Optional[int] = None  # crowd number; a random one when not given, so every test meets different people
     budgetUsd: Optional[float] = None
     marketScan: bool = True
 
@@ -65,7 +66,7 @@ _library_job: dict[str, Any] = {"running": False, "done": 0, "total": 0, "cost":
 @app.get("/health")
 def health():
     return {"ok": True, "provider": settings.effective_provider, "crowdModel": settings.model_for("crowd"), "analystModel": settings.model_for("analyst"),
-            "devMode": settings.dev_mode, "library": db.persona_count(), "runBudgetUsd": settings.run_budget_usd}
+            "devMode": settings.dev_mode, "library": db.persona_count(), "village": len(village()), "runBudgetUsd": settings.run_budget_usd}
 
 
 # ---- library ----
@@ -121,6 +122,8 @@ async def create_run(body: RunIn):
     rid = "run_" + uuid.uuid4().hex[:10]
     cfg = body.model_dump()
     cfg["budgetUsd"] = cfg["budgetUsd"] or settings.run_budget_usd
+    if cfg["seed"] is None:
+        cfg["seed"] = secrets.randbelow(1_000_000)
     db.create_run(rid, body.stimulus_id, cfg)
     start_run_task(rid)
     # Wait briefly for the crowd to be sampled so the client can fetch personas right away.

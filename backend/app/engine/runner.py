@@ -8,6 +8,7 @@ import traceback
 from .. import db
 from ..config import settings
 from ..llm import Meter, llm
+from ..personas.frame import FRAME_VERSION
 from ..personas.sampler import composition, sample_crowd
 from .events import bus
 from .experts import run_experts
@@ -20,14 +21,18 @@ from .stimulus import build_brief
 
 log = logging.getLogger("runner")
 _running: dict[str, dict] = {}
-_library_cache: list[dict] | None = None
+_village_cache: dict = {"key": None, "index": []}
+MIN_VILLAGE = 1000  # a newer library version takes over once it has at least this many people
 
 
-def library() -> list[dict]:
-    global _library_cache
-    if _library_cache is None or len(_library_cache) != db.persona_count():
-        _library_cache = db.all_personas()
-    return _library_cache
+def village() -> list[dict]:
+    """The people new runs draw from: the current library version once it is built, otherwise every person in the library.
+    Holds sampling attributes only; the runner loads the people drawn."""
+    version = FRAME_VERSION if db.persona_count(FRAME_VERSION) >= MIN_VILLAGE else None
+    key = (version, db.persona_count(version))
+    if _village_cache["key"] != key:
+        _village_cache.update(key=key, index=db.library_index(version))
+    return _village_cache["index"]
 
 
 def stop_run(run_id: str) -> bool:
@@ -59,21 +64,27 @@ async def execute_run(run_id: str) -> None:
 
     try:
         llm()  # initialise provider early so a bad key fails fast
-        # ---- crowd ----
-        lib = library()
+        # ---- crowd: drawn from the people tested least so far ----
+        lib = village()
         if not lib:
             raise RuntimeError("Persona library is empty. Run scripts/build_library.py first.")
-        crowd = sample_crowd(lib, int(cfg.get("crowdSize", 300)), stimulus.get("targetAudience", ""), state["seed"])
-        lib_by_id = {p["id"]: p for p in lib}
+        uses = db.persona_use_counts()
+        people: dict[int, dict] = {}
+
+        def load(ids: list[int]) -> dict[int, dict]:
+            people.update(db.personas_by_ids(ids))
+            return people
+        crowd = sample_crowd(lib, int(cfg.get("crowdSize", 300)), stimulus.get("targetAudience", ""), state["seed"], use_counts=uses, load=load)
         for a in crowd:
-            a["_sk"] = lib_by_id[a["personaId"]]["skeleton"]; a["_profile"] = lib_by_id[a["personaId"]]["profile"]
+            a["_sk"] = people[a["personaId"]]["skeleton"]; a["_profile"] = people[a["personaId"]]["profile"]
+        state["crowd_info"] = {"seed": state["seed"], "village": len(lib), "newPeople": sum(1 for a in crowd if not uses.get(a["personaId"]))}
         db.insert_run_agents(run_id, [{k: v for k, v in a.items() if not k.startswith("_")} for a in crowd])
         db.update_run(run_id, status="running")
         await bus.emit(run_id, {"kind": "crowd_ready", "n": len(crowd)})
 
         # ---- stage 0: brief ----
         stimulus = await build_brief(stimulus, meter)
-        db.save_stimulus(run["stimulus_id"], stimulus)
+        db.save_stimulus(run["stimulus_id"], {k: v for k, v in stimulus.items() if k != "_images"})
 
         # ---- stage 0b: market scan; each agent gets the slice they'd plausibly know, and news can shift mood ----
         market: dict = {"status": "off"}
@@ -120,6 +131,7 @@ async def execute_run(run_id: str) -> None:
                                            **(market.get("brief") or {}), "moodShifts": shifts}
         if state["stopped"]:
             scorecard["confidence"]["note"] += f" Run ended early: {state.get('stop_reason', 'stopped')}."
+        scorecard["research"]["crowd"] = state["crowd_info"]
         scorecard["research"]["costUsd"] = round(meter.cost_usd, 3)
         scorecard["research"]["suppressedMoves"] = state.get("suppressed_moves", 0)
         scorecard["research"]["tokens"] = meter.tokens
