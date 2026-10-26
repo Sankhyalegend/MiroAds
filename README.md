@@ -86,8 +86,13 @@ crowd of 50, and the script reports how often the crowd's click intent picks the
 
 First result (2026-10-25, 20 pairs with a clear real winner, crowds of 50 leaning US, Haiku 5.5, $0.53): the crowd
 picked the real winner 9 times in 20 (45%), no better than guessing. Its other answers did no better (stop chance
-8.5/20, score 10.5/20), and its click difference didn't track the real lift (correlation -0.04). Read the crowd for
-why people react (objections, segments, price, confusion), not to choose between two close headlines.
+8.5/20, score 10.5/20), and its click difference didn't track the real lift (correlation -0.04).
+
+Second result (2026-10-26, `--mode head-to-head --fresh`, 40 new pairs, $0.25): with both headlines side by side,
+21 of 40 (52%); real winners got 46% of the crowd's picks, and even its most lopsided picks (11 pairs) were right 5
+times. The crowd picked whichever headline came second 76% of the time (half saw each order, so this cancels out).
+Together: 30 of 60, a coin flip. Read the crowd for why people react (objections, segments, price, confusion), not
+to choose between two close headlines.
 
 Names: batch-built people repeat names far more than live ones; `--dedupe-names` fixes that in code for free
 (`generate.recombine_names` and `thin_family_names`).
