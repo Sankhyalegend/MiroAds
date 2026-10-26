@@ -44,6 +44,9 @@ class Settings:
     max_concurrency: int = field(default_factory=lambda: int(_env("MAX_CONCURRENCY", "24")))
     db_path: Path = field(default_factory=lambda: Path(_env("DB_PATH", str(ROOT / "data" / "crowd.db"))))
     cors_origins: list[str] = field(default_factory=lambda: _env("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(","))
+    # Deployed as one app (app.main:web): the built frontend it serves, and the password it asks for when set.
+    static_dir: Path = field(default_factory=lambda: Path(_env("STATIC_DIR", str(ROOT.parent / "frontend" / "dist"))))
+    app_password: str = field(default_factory=lambda: _env("APP_PASSWORD", ""))
 
     @property
     def effective_provider(self) -> str:

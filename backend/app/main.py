@@ -1,7 +1,11 @@
-"""Crowd Validator API. Run: uv run python -m uvicorn app.main:app --reload --port 8000"""
+"""Crowd Validator API. Run: uv run python -m uvicorn app.main:app --reload --port 8000
+
+Deployed (see Dockerfile and DEPLOY.md) it runs as app.main:web: the built frontend at /, this API under /api, and a
+password prompt in front of both when APP_PASSWORD is set."""
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import secrets
 import uuid
@@ -9,7 +13,9 @@ from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import db
 from .config import settings
@@ -244,3 +250,53 @@ async def ws_events(ws: WebSocket, rid: str, from_seq: int = 0):
         pass
     finally:
         bus.unsubscribe(rid, qd)
+
+
+# ---- deployed as one app: the built site at /, the API under /api ----
+class SiteFiles(StaticFiles):
+    """The built frontend. Pages the site routes itself (/scorecard/abc, /compare/a/b) get index.html."""
+
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as e:
+            if e.status_code != 404:
+                raise
+            return await super().get_response("index.html", scope)
+
+
+class PasswordGate:
+    """When APP_PASSWORD is set, the browser asks for it (any user name) before any page or API call, so a public URL
+    can't spend your API credit. Health checks pass for the host's monitoring. The live event stream isn't gated:
+    browsers don't reliably send the password on WebSocket connections, and it only reads a run whose id you know."""
+
+    def __init__(self, app, password: str) -> None:
+        self.app, self.password = app, password
+
+    def _allowed(self, scope) -> bool:
+        auth = dict(scope["headers"]).get(b"authorization", b"")
+        if not auth.startswith(b"Basic "):
+            return False
+        try:
+            _, _, given = base64.b64decode(auth[6:]).decode().partition(":")
+        except ValueError:
+            return False
+        return secrets.compare_digest(given.encode(), self.password.encode())
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope["path"] == "/api/health" or self._allowed(scope):
+            return await self.app(scope, receive, send)
+        await send({"type": "http.response.start", "status": 401,
+                    "headers": [(b"www-authenticate", b'Basic realm="Crowd Validator"'), (b"content-type", b"text/plain")]})
+        await send({"type": "http.response.body", "body": b"Password required"})
+
+
+def build_web():
+    site = FastAPI(title="Crowd Validator", docs_url=None, redoc_url=None, openapi_url=None)
+    site.mount("/api", app)
+    if settings.static_dir.is_dir():
+        site.mount("/", SiteFiles(directory=settings.static_dir, html=True), name="site")
+    return PasswordGate(site, settings.app_password) if settings.app_password else site
+
+
+web = build_web()

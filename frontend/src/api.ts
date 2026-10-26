@@ -1,7 +1,8 @@
 import type { AgentDetail, Comparison, Persona, Scorecard, SimEvent, Stimulus } from './types'
 
 export const API_BASE: string = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8000'
-const WS_BASE = API_BASE.replace(/^http/, 'ws')
+// A relative base (/api in the deployed build) means the server the page came from.
+const WS_BASE = API_BASE.startsWith('/') ? `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}${API_BASE}` : API_BASE.replace(/^http/, 'ws')
 
 async function j<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(API_BASE + path, { headers: { 'Content-Type': 'application/json' }, ...init })

@@ -1,0 +1,11 @@
+.git
+.claude
+deploy-package
+**/node_modules
+**/.venv
+**/__pycache__
+**/*.pyc
+**/*.log
+frontend/dist
+backend/data
+backend/.env
