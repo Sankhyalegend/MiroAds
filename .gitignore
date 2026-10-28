@@ -1,8 +1,27 @@
-﻿node_modules/
-dist/
+﻿# Secrets: the real API key lives only in backend/.env (copy backend/.env.example).
 .env
-*.log
-# The village database copied in for a deployment build, and the packaged zips (DEPLOY.md).
+.env.*
+!.env.example
+
+# Installed packages and build output
+node_modules/
+dist/
+.venv/
+__pycache__/
+*.pyc
+
+# Local data: the database (the village and every test), logs, and the packaged zips (DEPLOY.md)
+backend/data/
 backend/seed/
 deploy-package/
+*.db
+*.db-shm
+*.db-wal
+*.zip
+*.log
 
+# Settings for tools and editors on this machine
+.claude/
+.vscode/
+.idea/
+.DS_Store
