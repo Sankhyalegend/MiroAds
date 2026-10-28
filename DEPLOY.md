@@ -3,8 +3,10 @@
 The app runs as one container: the website and its API on a single port. You need three things on the host:
 
 1. **Your Anthropic API key**, set as `ANTHROPIC_API_KEY`. Never put it in a file you upload or commit.
-2. **A password**, set as `APP_PASSWORD`. Without one, anyone who finds the address can start paid tests on your key.
-   The browser asks for it once (type any user name).
+2. **A password**, set as `APP_PASSWORD`. Without one, the app refuses every page, so nobody who finds the address
+   can start paid tests on your key. The browser asks for it once (type any user name). Use a long random one
+   (16+ characters): the app doesn't limit how many guesses someone can make. (`OPEN_ACCESS=true` runs it with no
+   password, only for a private network.)
 3. **A persistent disk mounted at `/data`**, where the database lives (the 40,000-person village, your tests and reports).
    Without it, everything is lost when the container restarts.
 

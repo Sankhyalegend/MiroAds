@@ -47,6 +47,8 @@ class Settings:
     # Deployed as one app (app.main:web): the built frontend it serves, and the password it asks for when set.
     static_dir: Path = field(default_factory=lambda: Path(_env("STATIC_DIR", str(ROOT.parent / "frontend" / "dist"))))
     app_password: str = field(default_factory=lambda: _env("APP_PASSWORD", ""))
+    # Without APP_PASSWORD the deployed app refuses every page and API call, unless this says to run it open.
+    open_access: bool = field(default_factory=lambda: _env("OPEN_ACCESS", "false").lower() in ("1", "true", "yes"))
 
     @property
     def effective_provider(self) -> str:

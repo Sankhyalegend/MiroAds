@@ -9,7 +9,7 @@ import base64
 import logging
 import secrets
 import uuid
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,16 +40,20 @@ class AttachmentIn(BaseModel):
     text: Optional[str] = Field(default=None, max_length=200_000)
 
 
+OfferText = Annotated[str, Field(max_length=2000)]
+
+
 class StimulusIn(BaseModel):
+    # Length caps keep one request from filling the database or every agent's prompt.
     type: str = Field(pattern="^(creative|website|offer|idea)$")
-    title: str
-    brief: str = ""
-    briefInput: str = ""  # the description as typed, kept for "Test a new version"
-    targetAudience: str = ""
-    imageUrl: Optional[str] = None
-    url: Optional[str] = None
-    offer: Optional[dict[str, Any]] = None
-    competitors: str = ""  # optional hint for the market scan
+    title: str = Field(max_length=300)
+    brief: str = Field(default="", max_length=50_000)
+    briefInput: str = Field(default="", max_length=50_000)  # the description as typed, kept for "Test a new version"
+    targetAudience: str = Field(default="", max_length=2000)
+    imageUrl: Optional[str] = Field(default=None, max_length=15_000_000)  # a data URL, like AttachmentIn.data
+    url: Optional[str] = Field(default=None, max_length=2000)
+    offer: Optional[dict[str, OfferText]] = Field(default=None, max_length=10)
+    competitors: str = Field(default="", max_length=2000)  # optional hint for the market scan
     attachments: list[AttachmentIn] = Field(default_factory=list, max_length=6)
 
 
@@ -58,7 +62,7 @@ class RunIn(BaseModel):
     crowdSize: int = Field(default=300, ge=20, le=3000)
     rounds: int = Field(default=5, ge=0, le=12)
     seed: Optional[int] = None  # crowd number; a random one when not given, so every test meets different people
-    budgetUsd: Optional[float] = None
+    budgetUsd: Optional[float] = Field(default=None, gt=0)  # may lower the server's RUN_BUDGET_USD, never raise it
     marketScan: bool = True
     # A/B test: judge this version with the very people of an earlier run (their moods, market knowledge, crowd number and rounds).
     sameCrowdAs: Optional[str] = None
@@ -67,7 +71,7 @@ class RunIn(BaseModel):
 class LibraryBuildIn(BaseModel):
     n: int = Field(default=1000, ge=1, le=20000)
     seed: int = 1
-    budgetUsd: float = 6.0
+    budgetUsd: float = Field(default=6.0, gt=0, le=10.0)
 
 
 _library_job: dict[str, Any] = {"running": False, "done": 0, "total": 0, "cost": 0.0, "error": None}
@@ -131,7 +135,7 @@ async def create_run(body: RunIn):
         raise HTTPException(409, "persona library is empty; build it first (POST /library/build)")
     rid = "run_" + uuid.uuid4().hex[:10]
     cfg = body.model_dump()
-    cfg["budgetUsd"] = cfg["budgetUsd"] or settings.run_budget_usd
+    cfg["budgetUsd"] = min(cfg["budgetUsd"] or settings.run_budget_usd, settings.run_budget_usd)
     if body.sameCrowdAs:
         src = db.get_run(body.sameCrowdAs)
         if not src or src["status"] not in ("done", "stopped"):
@@ -266,16 +270,17 @@ class SiteFiles(StaticFiles):
 
 
 class PasswordGate:
-    """When APP_PASSWORD is set, the browser asks for it (any user name) before any page or API call, so a public URL
-    can't spend your API credit. Health checks pass for the host's monitoring. The live event stream isn't gated:
-    browsers don't reliably send the password on WebSocket connections, and it only reads a run whose id you know."""
+    """The browser asks for APP_PASSWORD (any user name) before any page or API call, so a public URL can't spend your
+    API credit. With no password set, every call is refused until one is. Health checks pass for the host's monitoring.
+    The live event stream isn't gated: browsers don't reliably send the password on WebSocket connections, and it only
+    reads a run whose id you know."""
 
     def __init__(self, app, password: str) -> None:
         self.app, self.password = app, password
 
     def _allowed(self, scope) -> bool:
         auth = dict(scope["headers"]).get(b"authorization", b"")
-        if not auth.startswith(b"Basic "):
+        if not self.password or not auth.startswith(b"Basic "):
             return False
         try:
             _, _, given = base64.b64decode(auth[6:]).decode().partition(":")
@@ -286,6 +291,10 @@ class PasswordGate:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http" or scope["path"] == "/api/health" or self._allowed(scope):
             return await self.app(scope, receive, send)
+        if not self.password:
+            await send({"type": "http.response.start", "status": 503, "headers": [(b"content-type", b"text/plain")]})
+            await send({"type": "http.response.body", "body": b"Set APP_PASSWORD on the server (see DEPLOY.md)"})
+            return
         await send({"type": "http.response.start", "status": 401,
                     "headers": [(b"www-authenticate", b'Basic realm="Crowd Validator"'), (b"content-type", b"text/plain")]})
         await send({"type": "http.response.body", "body": b"Password required"})
@@ -296,7 +305,7 @@ def build_web():
     site.mount("/api", app)
     if settings.static_dir.is_dir():
         site.mount("/", SiteFiles(directory=settings.static_dir, html=True), name="site")
-    return PasswordGate(site, settings.app_password) if settings.app_password else site
+    return site if settings.open_access else PasswordGate(site, settings.app_password)
 
 
 web = build_web()
